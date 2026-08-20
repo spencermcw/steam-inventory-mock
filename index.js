@@ -18,6 +18,7 @@ const { init, SteamCallback, EResult, SteamItemFlags, SteamInventoryError } = re
 const {
   Engine,
   RESULT,
+  ITEM_FLAGS,
   DEFAULT_OPTIONS,
   MAX_DROPS_PER_WINDOW,
   MAX_ITEMS_PER_UPDATE,
@@ -57,6 +58,8 @@ module.exports = {
   // Engine core
   Engine,
   RESULT,
+  /** SteamItemDetails_t::m_unFlags bits, as set on the handle-based provider's result rows. */
+  ITEM_FLAGS,
   DEFAULT_OPTIONS,
   MAX_DROPS_PER_WINDOW,
   /** Valve: "up to 100 items for a user in each call" to SubmitUpdateProperties. */

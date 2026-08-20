@@ -133,6 +133,14 @@ schema properties.
 | `k_ESteamItemRemoved` | `1 << 8` | yes — the engine records why each result row is there |
 | `k_ESteamItemConsumed` | `1 << 9` | yes — same |
 
+Two readings here are unmeasured. A stack consumed to zero gets **both** bits (it was consumed,
+and the instance is gone); real Steam may set only one. And exchange materials are flagged
+consumed even though `ConsumeItem` was not the call, on the reading that Valve documents the
+destroy array as what the exchange consumes.
+
+One narrower-than-Valve gap: `k_ESteamItemRemoved` also covers *traded away* and *expired*.
+Neither is modelled here, so in this library the flag only ever means "this call removed it".
+
 This matters more than it sounds. An `ExchangeItems` under the default `toolResultPolicy` returns
 the consumed tool, the *destroyed* target and the *new* target — and the first two come back at
 quantity 0 with the same itemdefid as the third. Without flags, a caller looking for its result by
