@@ -171,3 +171,27 @@ test('results: without deferDefinitions, definitions are available immediately',
   assert.ok(p.getItemDefinitionIDs().includes(9001));
   assert.equal(p.getItemDefinitionProperty(9001, 'name'), 'Alpha');
 });
+
+// ─── Deprecated and lifecycle callbacks ──────────────────────────────────────
+
+test('results: sendItemDropHeartbeat is inert rather than an error', { skip: h.needs('customSchema') }, () => {
+  // Valve deprecated it. A client ported from an older SDK still calls it, and
+  // throwing on something real Steam merely ignores sends someone chasing a
+  // bug that does not exist.
+  const p = h.createProvider({ schema: fixtures });
+  assert.doesNotThrow(() => p.sendItemDropHeartbeat());
+  assert.doesNotThrow(() => p.sendItemDropHeartbeat());
+});
+
+test('results: a successful grant raises fullUpdate, a failure does not', { skip: h.needs('customSchema', 'sandboxGrants') }, async () => {
+  const p = h.createProvider({ schema: fixtures });
+  let updates = 0;
+  p.on('fullUpdate', () => updates++);
+
+  await h.call(p, 'generateItems', [9001], [2]);
+  assert.equal(updates, 1, 'the grant refreshed the inventory');
+
+  // 9015 has no exchange formula, so this fails without touching anything.
+  await h.call(p, 'exchangeItems', 9015, [{ itemId: 1, quantity: 1 }]);
+  assert.equal(updates, 1, 'a failed call must not train the client to redraw');
+});
