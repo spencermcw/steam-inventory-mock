@@ -155,13 +155,11 @@ test('tag tools: a bare remover is allowed on a target with no allowed_tags_from
 
 // ─── toolResultPolicy: both readings of Valve's docs ──────────────────────────
 
-// These two need an engine option that only a mock can offer — a real
-// SteamProvider does one of the two and cannot be told which. Gated on
-// configurableSurplus, the existing flag for "unverified behaviour is
-// selectable here"; an integrator adding a `configurableToolResult` capability
-// should move these onto it.
+// These gate on configurableToolResult: real Steam does exactly one of the
+// two readings and cannot be told which, so both-readings tests can only run
+// against a target that lets the policy be selected.
 
-test("tag tools: toolResultPolicy 'new-instance' issues the target under a fresh id", { skip: h.needs('customSchema', 'sandboxGrants', 'configurableSurplus') }, async () => {
+test("tag tools: toolResultPolicy 'new-instance' issues the target under a fresh id", { skip: h.needs('customSchema', 'sandboxGrants', 'configurableToolResult') }, async () => {
   const p = provider({ toolResultPolicy: 'new-instance' });
   await h.seed(p, { 9100: 1, 9101: 1 });
 
@@ -173,7 +171,7 @@ test("tag tools: toolResultPolicy 'new-instance' issues the target under a fresh
   assert.deepEqual(tagsOf(after), ['paint_color:red']);
 });
 
-test("tag tools: toolResultPolicy 'mutate' keeps the target's instance id", { skip: h.needs('customSchema', 'sandboxGrants', 'configurableSurplus') }, async () => {
+test("tag tools: toolResultPolicy 'mutate' keeps the target's instance id", { skip: h.needs('customSchema', 'sandboxGrants', 'configurableToolResult') }, async () => {
   const p = provider({ toolResultPolicy: 'mutate' });
   await h.seed(p, { 9100: 1, 9101: 1 });
 
@@ -185,7 +183,7 @@ test("tag tools: toolResultPolicy 'mutate' keeps the target's instance id", { sk
   assert.deepEqual(tagsOf(after), ['paint_color:red']);
 });
 
-test("tag tools: a refusal under 'mutate' restores the target's tags", { skip: h.needs('customSchema', 'sandboxGrants', 'configurableSurplus') }, async () => {
+test("tag tools: a refusal under 'mutate' restores the target's tags", { skip: h.needs('customSchema', 'sandboxGrants', 'configurableToolResult') }, async () => {
   const p = provider({ toolResultPolicy: 'mutate' });
   await h.seed(p, { 9100: 1, 9111: 1, 9101: 1 });
   await apply(p, 9100, 9101);

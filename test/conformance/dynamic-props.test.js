@@ -36,7 +36,7 @@ const provider = (options = {}) => h.createProvider({ schema: fixtures, ...optio
  * what a partial binding declines; when a real target registers in the harness
  * and declares it, it belongs in this list too.
  */
-const needsProps = (...extra) => h.needs('customSchema', 'sandboxGrants', ...extra);
+const needsProps = (...extra) => h.needs('customSchema', 'sandboxGrants', 'dynamicProperties', ...extra);
 
 /** The dynamic_props JSON for one item, read back the way Valve says to read it. */
 async function readProps(p, itemId) {

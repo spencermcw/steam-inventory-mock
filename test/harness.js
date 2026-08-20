@@ -25,20 +25,13 @@ const { MockProvider, call, RESULT } = require('../index');
 const TARGETS = {
   mock: {
     name: 'mock',
-    capabilities: {
-      virtualClock: true,
-      customSchema: true,
-      sandboxGrants: true,
-      deterministicRng: true,
-      failureReasons: true,
-      /** surplusPolicy is configurable; real Steam's behaviour is fixed and unmeasured. */
-      configurableSurplus: true,
-      /** Owned apps / achievements / per-app playtime can be set for promo rules. */
-      entitlements: true,
-      /** bypassDropGating / bypassPromoGating engine options exist and take effect. */
-      gatingBypass: true,
-      /** State can be exported with save() and reimported with load(). */
-      persistence: true,
+    // Derived from the provider rather than restated here. A hand-maintained
+    // copy of this list has drifted from the canonical one twice already, and
+    // the failure is quiet in the worst direction: a flag missing here makes
+    // `needs()` skip a whole file, so the suite goes green by not running.
+    // MockProvider spreads CAPABILITIES, so asking it is always current.
+    get capabilities() {
+      return new MockProvider({ schema: { appid: 0, items: [] } }).capabilities;
     },
     create(options = {}) {
       return new MockProvider({ seed: 'conformance', ...options });

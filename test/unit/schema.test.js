@@ -93,3 +93,15 @@ test('schema: loadSchema() with no source is a hard error', () => {
   // how a mock ends up silently validating the wrong content.
   assert.throws(() => loadSchema(), /requires an itemdef source/);
 });
+
+// ─── Capability-list integrity ────────────────────────────────────────────────
+
+test('capabilities: every canonical flag is answered by the conformance target', () => {
+  // `needs()` skips a test when a flag is missing, so a flag that exists in
+  // CAPABILITIES but not on the target silently disables whole files while the
+  // suite still reports green. That has happened twice; this is the guard.
+  const { CAPABILITIES } = require('../../lib/provider-interface');
+  const h = require('../harness');
+  const unanswered = Object.keys(CAPABILITIES).filter(flag => h.capabilities[flag] === undefined);
+  assert.deepEqual(unanswered, [], 'target must answer every canonical capability, true or false');
+});
