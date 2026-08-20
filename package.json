@@ -21,7 +21,10 @@
     "client.d.ts",
     "lib",
     "examples",
-    "README.md"
+    "test",
+    "README.md",
+    "LICENSE",
+    "docs/coverage.md"
   ],
   "keywords": [
     "steam",
@@ -32,5 +35,14 @@
     "itemdef",
     "economy"
   ],
-  "license": "UNLICENSED"
+  "license": "MIT",
+  "author": "spencermcw",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spencermcw/steam-inventory-mock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/spencermcw/steam-inventory-mock/issues"
+  },
+  "homepage": "https://github.com/spencermcw/steam-inventory-mock#readme"
 }

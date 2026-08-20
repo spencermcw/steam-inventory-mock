@@ -13,7 +13,9 @@ dependencies, CommonJS, Node ≥ 22, 308 tests on Node's built-in runner and no 
 ### Nothing here has been verified against real Steam
 
 No vertical slice of this library has ever been run against a real test app. The implementation is
-inference from Valve's public documentation — mirrored in [`docs/`](docs/) — plus a reading of what
+inference from [Valve's public documentation](https://partner.steamgames.com/doc/features/inventory)
+— mirrored in `docs/` in the repository, which is not redistributed in the npm package — plus a
+reading of what
 the servers plausibly do. Where the docs are explicit, the behaviour follows them. Everywhere else
 it is a considered guess.
 
