@@ -1,5 +1,10 @@
 # Reference documentation
 
+> **In the npm package, only `coverage.md` from this directory is present.** The Valve pages listed
+> below are mirrored in the git repository for offline reference and are not redistributed — follow
+> the links to read them. (npm includes every `README.md` it finds, which is why this file ships
+> even though the pages it describes do not.)
+
 Local copies of Valve's public Steamworks documentation for the Inventory Service, saved so the
 behaviour this library emulates can be checked against its source without a network round trip.
 
