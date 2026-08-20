@@ -7,12 +7,14 @@
  *
  *   const { MockProvider } = require('./mock');           // async, Steam-shaped
  *   const { Engine }       = require('./mock');           // sync core, for the simulator
+ *   const { init }         = require('./mock');           // steamworks.js-shaped façade
  *
- * Both sit on the same engine by construction, so the economy the balance
+ * All three sit on the same engine by construction, so the economy the balance
  * simulator validates is the economy the client plays.
  */
 
 const { MockProvider } = require('./lib/provider');
+const { init, SteamCallback, EResult, SteamItemFlags, SteamInventoryError } = require('./lib/steamworks');
 const {
   Engine,
   RESULT,
@@ -33,6 +35,19 @@ const properties = require('./lib/properties');
 const exampleEconomy = require('./examples/economy');
 
 module.exports = {
+  /**
+   * steamworks.js-shaped façade over MockProvider (see lib/steamworks.js):
+   * namespaced free functions, promises, bigint item ids. The handle-based
+   * MockProvider below is unchanged and remains the surface a real napi
+   * binding maps onto — this is a second layer on top of it, not a
+   * replacement.
+   */
+  init,
+  SteamCallback,
+  EResult,
+  SteamItemFlags,
+  SteamInventoryError,
+
   // Providers
   MockProvider,
   InventoryProvider,

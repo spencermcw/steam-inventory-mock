@@ -22,6 +22,7 @@ const assert = require('node:assert');
 
 const h = require('../harness');
 const fixtures = require('../../examples/economy');
+const { SAVE_VERSION, SAVE_KIND } = require('../../index');
 
 const provider = (options = {}) => h.createProvider({ schema: fixtures, ...options });
 const needs = (...caps) => h.needs('persistence', ...caps);
@@ -180,7 +181,119 @@ test('persistence: a save from a newer build is refused', { skip: needs('customS
   const p = provider();
   const state = p.save();
   assert.throws(() => p.load({ ...state, version: state.version + 1 }), /newer build/);
+  assert.throws(() => p.load({ ...state, version: 3 }), /newer build/);
   assert.throws(() => p.load({ ...state, version: null }), /no usable version/);
+});
+
+// ─── Migration ────────────────────────────────────────────────────────────────
+
+/**
+ * A save as version 1 of the format wrote it — before item instances carried
+ * dynamic properties, so no instance has a `dynamicProps` key.
+ *
+ * Constructed literally, from the fixture schema's itemdefs, rather than by
+ * deleting fields from a current save: a fixture derived from today's payload
+ * would drift with the code it exists to test, and would prove only that
+ * whatever the test removed got put back. This is the file an already-shipped
+ * client wrote and will hand back after an update.
+ *
+ * The clock and the drop bucket are set up so the drop taken during the v1
+ * session is still spent on load: 75 minutes played, last granted at 60, and
+ * 9050 wants 30 between drops.
+ */
+function version1Save() {
+  return {
+    kind: SAVE_KIND,
+    version: 1,
+    savedAt: '2024-03-01T12:00:00.000Z',
+    nextInstanceId: 4010,
+    rng: 3735928559,
+    clock: { nowMs: 1709294400000, playtimeMinutes: 75 },
+    account: {
+      id: 'v1-player',
+      instances: [
+        { itemId: 4001, itemdefid: 9001, quantity: 5, tags: [], acquiredMs: 1000 },
+        {
+          itemId: 4002,
+          itemdefid: 9002,
+          quantity: 1,
+          tags: [{ key: 'color', value: 'red' }, { key: 'quality', value: 'legendary' }],
+          acquiredMs: 2000,
+        },
+        { itemId: 4004, itemdefid: 9004, quantity: 1, tags: [], acquiredMs: 3000 },
+      ],
+      dropBuckets: [
+        { key: 'def:9050', grants: 2, playtimeAtLastGrant: 60, windowStartMs: null, windowGrants: 0 },
+      ],
+      promoGrants: [{ itemdefid: 9060, count: 1, lastGrantMs: 55555 }],
+      ownedApps: [440],
+      achievements: ['first_landing'],
+      playtimeByApp: [{ appid: 570, minutes: 900 }],
+    },
+  };
+}
+
+test('persistence: a version 1 save migrates and loads, losing nothing', { skip: needs('customSchema', 'virtualClock') }, async () => {
+  const p = provider();
+  p.load(version1Save());
+
+  // Items and the per-item tags rolled when they were created.
+  const items = await h.snapshot(p);
+  assert.deepEqual(items.map(i => i.itemId), [4001, 4002, 4004]);
+  assert.equal(items.find(i => i.itemId === 4001).quantity, 5);
+  assert.equal(items.find(i => i.itemId === 4002).tags, 'color:red;quality:legendary');
+  assert.equal(items.find(i => i.itemId === 4004).tags, '');
+
+  // The field the format bumped for: absent in v1, and an empty set — not
+  // undefined — on every instance afterwards.
+  for (const item of items) assert.deepEqual(p.account.get(item.itemId).dynamicProps, {});
+
+  // The drop taken in the v1 session is still spent, and the timer resumes
+  // where that session left it rather than from zero.
+  const immediate = await h.call(p, 'triggerItemDrop', 9050);
+  assert.equal(immediate.granted, false);
+  assert.match(immediate.reason, /playtime/);
+  p.advanceTime(20);
+  assert.equal((await h.call(p, 'triggerItemDrop', 9050)).granted, true);
+
+  // The once-per-account promo claimed in the v1 session is still claimed.
+  const again = await h.call(p, 'addPromoItem', 9060);
+  assert.equal(again.granted, false);
+  assert.match(again.reason, /once per account/);
+
+  // ...as are the entitlements the promo rules read.
+  assert.ok(p.account.ownedApps.has(440));
+  assert.ok(p.account.achievements.has('first_landing'));
+  assert.equal(p.account.playtimeByApp.get(570), 900);
+});
+
+test('persistence: a migrated version 1 save is written back out as the current version', { skip: needs('customSchema', 'virtualClock') }, async () => {
+  const p = provider();
+  p.load(version1Save());
+
+  const resaved = p.save();
+  assert.equal(resaved.version, SAVE_VERSION);
+  assert.ok(resaved.account.instances.every(i => JSON.stringify(i.dynamicProps) === '{}'));
+
+  // And once it is current it is stable: reloading changes not one byte, which
+  // is what makes a diff of two saves evidence that something happened.
+  const after = provider();
+  after.load(JSON.parse(JSON.stringify(resaved)));
+  assert.equal(JSON.stringify(after.save().account), JSON.stringify(resaved.account));
+});
+
+test('persistence: a current-version save round-trips unchanged', { skip: needs('customSchema', 'sandboxGrants', 'virtualClock') }, async () => {
+  const before = await playSession(provider({ seed: 'save-version-round-trip' }));
+  const state = JSON.parse(JSON.stringify(before.save()));
+  assert.equal(state.version, SAVE_VERSION);
+
+  const after = provider();
+  after.load(state);
+  const resaved = after.save();
+
+  assert.equal(resaved.version, SAVE_VERSION);
+  assert.equal(JSON.stringify(resaved.account), JSON.stringify(state.account));
+  assert.equal(resaved.nextInstanceId >= state.nextInstanceId, true, 'the watermark never goes backwards');
 });
 
 test('persistence: result handles are not part of a save', { skip: needs('customSchema', 'sandboxGrants') }, async () => {

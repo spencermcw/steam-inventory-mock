@@ -60,7 +60,8 @@ schema pages mirrored in this directory.
 | `RemoveProperty` | `removeProperty(h, itemId, name)` | yes |
 | `SubmitUpdateProperties` | `submitUpdateProperties(h)` | yes — transactional, rolls back whole |
 | 100 items/call, 1024 bytes/item limits | enforced | yes — `LIMIT_EXCEEDED` |
-| Client property whitelist + tag restrictions | `propertyWhitelist` option | yes — off by default; partner-site config the mock cannot know |
+| Client property whitelist + tag restrictions | `propertyWhitelist` option | yes — **off by default**; the whitelist is partner-site config this library cannot know, so a client that works here can still be refused by real Steam |
+| Per-user rate limiting | — | no — time-based partner-side policy with no published window |
 | Cleared on trade | — | n/a — no trading here |
 | `%token%` description substitution | — | n/a — web-view rendering |
 
@@ -72,8 +73,22 @@ schema pages mirrored in this directory.
 | `tags_to_remove_on_tool_use` | yes | yes — bare category or full `category:value` |
 | `allowed_tags_from_tools` | yes | yes — failure does not consume the tool |
 | `tag_generators` on a tool | yes | yes |
+| What the call leaves behind | `toolResultPolicy` | **ambiguous in Valve's own docs** — see below |
 | `accessory_tag` / `accessory_limit` | yes | yes — default limit 4; duplicates refused |
 | `accessory_description_<lang>` | — | n/a — web-view rendering |
+
+### Two things here are guesses, not facts
+
+**`toolResultPolicy`.** `docs/tools.html` says applying a tool creates "a new item (copied from
+the target item)"; `docs/accessories.html` says the call will "update the tags on the target item".
+Those are different outcomes. Both are implemented and both are pinned by tests; the default is
+`'new-instance'`, the more explicit wording. It is not a cosmetic difference — under
+`'new-instance'` the target's instance id dies with the call, invalidating anything holding it.
+
+**`accessory_tag` implicitly permits its own category** even when the target declares no
+`allowed_tags_from_tools`. Valve does not say either way. The strict reading would make an item
+that declares only `accessory_tag` inert, which seems unlikely to be intended, but this is
+unconfirmed.
 
 ## Prices and purchase — **not implemented**
 
@@ -104,11 +119,20 @@ Parsed into structure and acted on: `itemdefid`, `type`, `name`, `description`, 
 `drop_start_time`, `auto_stack`, `tradable`, `marketable`, `hidden`, `game_only`, `quantity`,
 `container_contents_generator`, `use_drop_limit`, `drop_limit`, `drop_interval`, `use_drop_window`,
 `drop_window`, `drop_max_per_window`, `granted_manually`, `tags_to_remove_on_tool_use`,
-`allowed_tags_from_tools`, `accessory_tag`, `accessory_limit`.
+`allowed_tags_from_tools`, `accessory_tag`, `accessory_limit`, `display_type`.
 
 Every other field — including all extended/custom properties you define — is preserved on
 `ItemDef.raw` and readable through `getItemDefinitionProperty`, exactly as Steam returns extended
 schema properties.
+
+## Beyond ISteamInventory
+
+A few calls exist here that Steam has no counterpart for. They are diagnostics, and they are
+deliberately not disguised as API: `getResultReason` (why a call failed — Steam returns only an
+`EResult`), `describeUpdate` (what a property batch has staged), `leakedResults` (result handles
+never destroyed), and `advanceTime` (the virtual clock). Through the steamworks.js-shaped façade
+these live under a separate `client.mock` namespace, so swapping in a real binding fails loudly
+rather than silently doing nothing.
 
 ## Not modelled at all
 

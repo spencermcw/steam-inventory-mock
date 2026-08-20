@@ -22,8 +22,18 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { Account, peekNextInstanceId, reserveInstanceIds } = require('../../lib/inventory');
-const { saveState, loadState, migrate, writeSave, readSave, SAVE_VERSION, SAVE_KIND } = require('../../lib/persistence');
+const { Account, ItemInstance, peekNextInstanceId, reserveInstanceIds } = require('../../lib/inventory');
+const {
+  saveState,
+  loadState,
+  migrate,
+  writeSave,
+  readSave,
+  MIGRATIONS,
+  SAVE_VERSION,
+  SAVE_KIND,
+} = require('../../lib/persistence');
+const { stringProperty, intProperty, floatProperty } = require('../../lib/properties');
 const { Engine } = require('../../lib/engine');
 const fixtures = require('../../examples/economy');
 
@@ -106,6 +116,28 @@ test('save: the payload is stable, so an unchanged account saves byte-identicall
     promoGrants: [...payload.promoGrants].reverse(),
   };
   assert.equal(JSON.stringify(Account.fromJSON(payload).toJSON()), JSON.stringify(Account.fromJSON(shuffled).toJSON()));
+});
+
+test('save: dynamic properties do not break the byte-identical guarantee', () => {
+  // Property names arrive in whatever order the game set them, which is the one
+  // collection in the save form whose order the library does not otherwise
+  // control. Two instances holding the same properties must still emit the same
+  // bytes, or a diff of two saves stops meaning anything.
+  const values = { zulu: intProperty(1), alpha: stringProperty('a'), mike: floatProperty(0.5) };
+  const emit = order => {
+    const dynamicProps = {};
+    for (const name of order) dynamicProps[name] = values[name];
+    return JSON.stringify(new ItemInstance({ itemId: 1, itemdefid: 9001, quantity: 1, tags: [], dynamicProps }).toJSON());
+  };
+  assert.equal(emit(['zulu', 'alpha', 'mike']), emit(['mike', 'alpha', 'zulu']));
+
+  // ...and a round trip through the save form preserves that, rather than
+  // re-emitting in whatever order the parse happened to produce.
+  const account = new Account('props');
+  const instance = account.createInstance(9001, 1, [], 1000);
+  account.setDynamicProps(instance, { zulu: intProperty(1), alpha: stringProperty('a') });
+  const saved = JSON.stringify(account.toJSON());
+  assert.equal(JSON.stringify(Account.fromJSON(JSON.parse(saved)).toJSON()), saved);
 });
 
 test('save: serialising mid-transaction is refused', () => {
@@ -263,9 +295,189 @@ test('version: a missing, non-integer or foreign envelope is refused', () => {
 });
 
 test('version: an unbridgeable older version fails loudly rather than half-loading', () => {
-  // SAVE_VERSION is 1 today, so version 0 stands in for "older than anything we
-  // can migrate" — the shape the check will take once real migrations exist.
+  // Version 0 predates the envelope: nothing ever wrote it, there is no
+  // MIGRATIONS[0], and it is refused at the version check rather than falling
+  // into the chain and off the end of it.
   assert.throws(() => migrate({ kind: SAVE_KIND, version: 0, account: {} }), /no usable version/i);
+});
+
+// ─── Migrations ───────────────────────────────────────────────────────────────
+
+/**
+ * A save exactly as version 1 wrote it: no `dynamicProps` on any instance,
+ * because the subsystem did not exist.
+ *
+ * Written out literally rather than produced by stripping fields from a current
+ * save. A fixture derived from a v2 payload only proves that whatever the test
+ * deleted got put back, and it drifts along with the code it is supposed to be
+ * testing against; this is the file that is actually sitting on a player's disk.
+ *
+ * The ids are high on purpose: the instance-id counter is process-global, so a
+ * low-numbered fixture would be indistinguishable from ids the tests above
+ * handed out. `nextInstanceId` is past the highest of them, which is the case
+ * that matters — 4003 was allocated and consumed before the save, and must
+ * never be reissued.
+ */
+function version1Save() {
+  return {
+    kind: SAVE_KIND,
+    version: 1,
+    savedAt: '2024-03-01T12:00:00.000Z',
+    nextInstanceId: 4010,
+    rng: 3735928559,
+    clock: { nowMs: 1709294400000, playtimeMinutes: 75 },
+    account: {
+      id: 'v1-player',
+      instances: [
+        { itemId: 4001, itemdefid: 9001, quantity: 5, tags: [], acquiredMs: 1000 },
+        {
+          itemId: 4002,
+          itemdefid: 9002,
+          quantity: 1,
+          tags: [{ key: 'color', value: 'red' }, { key: 'quality', value: 'legendary' }],
+          acquiredMs: 2000,
+        },
+        { itemId: 4004, itemdefid: 9004, quantity: 1, tags: [], acquiredMs: 3000 },
+      ],
+      dropBuckets: [
+        { key: 'app', grants: 1, playtimeAtLastGrant: 30, windowStartMs: null, windowGrants: 0 },
+        { key: 'def:9050', grants: 2, playtimeAtLastGrant: 60, windowStartMs: 1234567, windowGrants: 1 },
+      ],
+      promoGrants: [{ itemdefid: 9060, count: 1, lastGrantMs: 55555 }],
+      ownedApps: [440],
+      achievements: ['first_landing'],
+      playtimeByApp: [{ appid: 570, minutes: 900 }],
+    },
+  };
+}
+
+test('migration: a version 1 save loads with every collection intact', () => {
+  const engine = engineWithFixtures();
+  const state = version1Save();
+  const asWritten = JSON.stringify(state);
+
+  const report = loadState(engine, state, { accountId: 'v1' });
+  const account = engine.account('v1');
+
+  assert.equal(report.version, SAVE_VERSION, 'the report names the version the payload was brought up to');
+  assert.deepEqual(account.list().map(i => i.itemId), [4001, 4002, 4004]);
+  assert.equal(account.countOf(9001), 5);
+
+  // The parts a naive "the items came back" check does not cover, and that a
+  // careless migration is exactly how you lose.
+  assert.deepEqual(account.get(4002).tags, [
+    { key: 'color', value: 'red' },
+    { key: 'quality', value: 'legendary' },
+  ]);
+  assert.equal(account.get(4002).toResult().tags, 'color:red;quality:legendary');
+  assert.deepEqual(account.dropBuckets.get('def:9050'), {
+    key: 'def:9050',
+    grants: 2,
+    playtimeAtLastGrant: 60,
+    windowStartMs: 1234567,
+    windowGrants: 1,
+  });
+  assert.equal(account.dropBuckets.get('app').playtimeAtLastGrant, 30);
+  assert.equal(account.promoGrants.get(9060).count, 1);
+  assert.equal(account.promoGrants.get(9060).lastGrantMs, 55555);
+  assert.ok(account.ownedApps.has(440));
+  assert.ok(account.achievements.has('first_landing'));
+  assert.equal(account.playtimeByApp.get(570), 900);
+  assert.equal(engine.clock.playtime(), 75);
+  assert.equal(engine.clock.now(), 1709294400000);
+
+  // The field the version bump is about: present and empty on every instance,
+  // never undefined, so nothing downstream has to special-case an old save.
+  for (const instance of account.list()) {
+    assert.deepEqual(instance.dynamicProps, {}, `instance ${instance.itemId} came back without a property set`);
+    assert.equal(instance.toResult().dynamic_props, '{}');
+  }
+
+  // The saved counter is honoured past the highest surviving id, so the
+  // instance consumed before the save is not handed straight back out.
+  assert.ok(report.nextInstanceId >= 4010, `watermark ${report.nextInstanceId} would reissue a consumed id`);
+
+  // And the migration did not scribble on the payload it was handed — the
+  // caller may still be holding the bytes it read off disk.
+  assert.equal(JSON.stringify(state), asWritten, 'migrate() mutated the state it was given');
+});
+
+test('migration: the chain is keyed by source version and applied in sequence', () => {
+  assert.ok(Object.prototype.hasOwnProperty.call(MIGRATIONS, '1'), 'no 1 → 2 migration is registered');
+  for (let v = 1; v < SAVE_VERSION; v++) {
+    assert.equal(typeof MIGRATIONS[v], 'function', `no migration from save version ${v} to ${v + 1}`);
+  }
+  for (const key of Object.keys(MIGRATIONS)) {
+    assert.ok(Number(key) < SAVE_VERSION, `MIGRATIONS[${key}] upgrades past SAVE_VERSION ${SAVE_VERSION}`);
+  }
+
+  const migrated = migrate(version1Save());
+  assert.equal(migrated.version, 2, 'one step from 1 lands on 2');
+  assert.equal(migrated.version, SAVE_VERSION);
+  assert.ok(
+    migrated.account.instances.every(i => i.dynamicProps && typeof i.dynamicProps === 'object'),
+    'the migrated payload is v2-shaped before it reaches Account.fromJSON'
+  );
+  // Everything the step had no business touching is identical, field for field.
+  const original = version1Save();
+  assert.deepEqual({ ...migrated, version: 1, account: null }, { ...original, version: 1, account: null });
+  assert.deepEqual(
+    migrated.account.instances.map(({ dynamicProps, ...rest }) => rest),
+    original.account.instances
+  );
+
+  // Running it again is a no-op rather than a second step: at SAVE_VERSION the
+  // loop body never executes and the same object comes back out.
+  assert.equal(migrate(migrated), migrated);
+});
+
+test('migration: a migrated version 1 save writes back out as version 2', () => {
+  const engine = engineWithFixtures();
+  loadState(engine, version1Save(), { accountId: 'v1-resave' });
+  const resaved = saveState(engine, { accountId: 'v1-resave' });
+
+  assert.equal(resaved.version, 2);
+  assert.ok(resaved.account.instances.every(i => JSON.stringify(i.dynamicProps) === '{}'));
+
+  // ...and it is a genuine v2 file: loading it back needs no migration and
+  // produces the same bytes again.
+  const fresh = engineWithFixtures();
+  const report = loadState(fresh, JSON.parse(JSON.stringify(resaved)), { accountId: 'v1-resave' });
+  assert.equal(report.version, 2);
+  assert.equal(
+    JSON.stringify(saveState(fresh, { accountId: 'v1-resave' }).account),
+    JSON.stringify(resaved.account),
+    'a v1 save that has been through the migration is not yet stable as v2'
+  );
+});
+
+test('migration: a version 2 payload is passed through untouched', () => {
+  const engine = engineWithFixtures();
+  engine.generateItems(engine.account('v2'), [9001, 9004], [3, 1]);
+  const state = JSON.parse(JSON.stringify(saveState(engine, { accountId: 'v2' })));
+  const asWritten = JSON.stringify(state);
+
+  assert.equal(state.version, 2);
+  assert.equal(migrate(state), state, 'a current save is returned as-is, not rebuilt');
+  assert.equal(JSON.stringify(state), asWritten);
+
+  const fresh = engineWithFixtures();
+  loadState(fresh, state, { accountId: 'v2' });
+  assert.equal(JSON.stringify(saveState(fresh, { accountId: 'v2' }).account), JSON.stringify(state.account));
+});
+
+test('migration: a version 3 save is refused rather than migrated', () => {
+  // The mirror of the case above: this build knows 1 → 2 and nothing else, and
+  // a file from a build that knows more is not something it can subset.
+  const engine = engineWithFixtures();
+  const state = { ...version1Save(), version: 3 };
+
+  assert.throws(() => migrate(state), /version 3 was written by a newer build/);
+  assert.throws(
+    () => loadState(engine, state, { accountId: 'v3' }),
+    err => err.code === 'SAVE_UNSUPPORTED'
+  );
+  assert.ok(!engine.accounts.has('v3'), 'a refused save must not half-load an account');
 });
 
 // ─── Engine-level load ────────────────────────────────────────────────────────
