@@ -12,6 +12,8 @@
     "test": "node --test test/unit/*.test.js test/conformance/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
     "test:conformance": "node --test test/conformance/*.test.js",
+    "test:conformance:report": "node test/conformance-report.js",
+    "test:conformance:example": "node test/conformance-report.js --target ./test/example-steam-target.js",
     "demo": "node demo/playthrough.js",
     "demo:save-load": "node demo/save-load.js",
     "demo:distribution": "node demo/distribution.js"

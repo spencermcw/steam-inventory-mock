@@ -70,3 +70,26 @@ jobs:
               ? console.log('installed package works')
               : (() => { throw new Error('no itemdefs'); })();
           "
+      - name: A consumer can register their own conformance target
+        run: |
+          cd /tmp/consumer
+          cat > my-target.js <<'JS'
+          'use strict';
+          const { MockProvider } = require('steam-inventory-mock');
+          module.exports = {
+            name: 'ci-target',
+            capabilities: {
+              virtualClock: false, customSchema: true, sandboxGrants: true,
+              deterministicRng: true, failureReasons: false, gatingBypass: false,
+              persistence: false, configurableSurplus: false, entitlements: true,
+              promoGrantAll: true, dynamicProperties: true, configurableToolResult: false,
+            },
+            create(options = {}) { return new MockProvider({ seed: 'ci', ...options }); },
+          };
+          JS
+          # The point of the suite is that a third party can aim it at their own
+          # binding without editing anything inside node_modules. This proves the
+          # documented path works from an installed package, which is the only
+          # place it matters.
+          STEAM_MOCK_TARGET=./my-target.js \
+            node --test node_modules/steam-inventory-mock/test/conformance/*.test.js

@@ -219,15 +219,19 @@ client-side.
 ## Conformance and the capability model
 
 Everything under `test/conformance/` is written against [`test/harness.js`](test/harness.js), never
-against `MockProvider` directly, so the same behavioural suite can later be pointed at a native
-`SteamProvider`:
+against `MockProvider` directly, so the same behavioural suite can be pointed at a native
+`SteamProvider` — including from your own project, against your installed copy, with no fork of
+this package:
 
 ```
-STEAM_MOCK_PROVIDER=steam node --test test/conformance/*.test.js
+STEAM_MOCK_TARGET=./steam-target.js \
+  node --test node_modules/steam-inventory-mock/test/conformance/*.test.js
 ```
 
 Divergence between mock and reality then shows up as a failing test in CI, continuously, rather
-than as a surprise during final integration.
+than as a surprise during final integration. The suite ships in the published package for exactly
+this reason; [registering a target](#registering-a-real-steamprovider) is two dozen lines in a file
+you own.
 
 Providers advertise capabilities (the canonical list is `CAPABILITIES` in
 [`lib/provider-interface.js`](lib/provider-interface.js)), and a test that needs something a
@@ -259,38 +263,115 @@ be a lie.**
 
 ### Registering a real SteamProvider
 
-`test/harness.js` carries a worked example in a comment block, next to the `mock` target. The shape
-is a name, a capability object and a factory:
+A **target** is a plain object with a name, a capability declaration and a factory. It lives in
+*your* project — nothing inside `node_modules` is edited, so nothing is lost on the next install.
+Copy [`test/example-steam-target.js`](test/example-steam-target.js) out of the installed package as
+a starting point; it is a real, runnable file, not a comment block, and every flag comes with the
+reason for its value:
 
 ```js
-const { SteamProvider } = require('../lib/steam-provider');
+// steam-target.js, in your project
+const { SteamProvider } = require('./native/steam-provider');
 
-steam: {
+module.exports = {
   name: 'steam',
   capabilities: {
-    virtualClock: false,          // you cannot time-travel live Steam
-    customSchema: false,          // a real provider loads the app's uploaded itemdefs
-    sandboxGrants: false,         // GenerateItems is sandbox-only
-    deterministicRng: false,      // rolls happen server-side; there is no seed
-    failureReasons: false,        // Steam gives an EResult, not a sentence
-    gatingBypass: false,          // drop_interval / drop_limit / promo recurrence are server-side
-    entitlements: false,          // owned apps, achievements and playtime are facts, not setup
-    configurableSurplus: false,   // Steam's surplus behaviour is fixed and unmeasured
-    persistence: false,           // the inventory lives on Steam's servers
-    // promoGrantAll and dynamicProperties should be `true` once the binding
-    // wires them up — real Steam supports both.
+    virtualClock: false,           // you cannot time-travel live Steam
+    customSchema: false,           // a real provider loads the app's uploaded itemdefs
+    sandboxGrants: false,          // GenerateItems is sandbox-only
+    deterministicRng: false,       // rolls happen server-side; there is no seed
+    failureReasons: false,         // Steam gives an EResult, not a sentence
+    gatingBypass: false,           // drop_interval / drop_limit / promo recurrence are server-side
+    configurableToolResult: false, // Steam does one of the two and cannot be told which
+    persistence: false,            // the inventory lives on Steam's servers
+    configurableSurplus: false,    // Steam's surplus behaviour is fixed and unmeasured
+    entitlements: false,           // owned apps, achievements and playtime are facts, not setup
+    promoGrantAll: true,           // real Steam supports these — declare what you have wired up
+    dynamicProperties: true,       // likewise
   },
   create(options = {}) {
     return new SteamProvider(options);
   },
-},
+};
 ```
 
-`needs()` treats an omitted flag as absent, so an incomplete capability object over-skips rather
-than over-claims. The `mock` target does not restate its flags at all — it reads them off a freshly
-constructed `MockProvider`, because a hand-maintained copy of that list has drifted twice already
-and the failure is quiet in the worst direction: one missing flag makes `needs()` skip a whole
-file, and the suite goes green by not running.
+Point the suite at it with `STEAM_MOCK_TARGET` — a path relative to the directory you run from, or
+the name of an installed package:
+
+```
+STEAM_MOCK_TARGET=./steam-target.js \
+  node --test node_modules/steam-inventory-mock/test/conformance/*.test.js
+```
+
+`STEAM_MOCK_PROVIDER=<name>` still selects a target by name, and is only needed when one module
+registers several. A module may also register targets itself, for that case or from a `--require`
+preload:
+
+```js
+const { registerTarget } = require('steam-inventory-mock/lib/conformance');
+registerTarget({ name: 'steam-beta', capabilities: { /* … */ }, create: () => new SteamProvider() });
+```
+
+### Reporting what went unverified
+
+Node's runner reports *that* tests skipped. Which **semantics** went unverified, and because of
+which missing capability, is the interesting part — and it is otherwise spread across 150 skip
+messages in fifteen child processes. The shipped reporter aggregates it:
+
+```
+node node_modules/steam-inventory-mock/test/conformance-report.js --target ./steam-target.js
+```
+
+```
+──────────────────────────────────────────────────────────────────────────────
+steam-inventory-mock — conformance against target "steam"
+──────────────────────────────────────────────────────────────────────────────
+  source      /tmp/consumer/steam-target.js
+  files       15 in /tmp/consumer/node_modules/steam-inventory-mock/test/conformance
+  supports    (nothing)
+  lacks       virtualClock, customSchema, sandboxGrants, …
+  contract    assertProviderShape passed at load
+
+Result: 0 passed, 0 failed, 183 skipped, of 183 tests
+──────────────────────────────────────────────────────────────────────────────
+
+Unverified semantics, by the capability that gated them
+──────────────────────────────────────────────────────────────────────────────
+  customSchema            183 tests did not run
+  sandboxGrants           126 tests did not run
+  dynamicProperties       32 tests did not run
+  …
+```
+
+It exits 1 if anything failed; a skip is not a failure, it is a coverage gap, and it is reported as
+one. `--name <target>` picks between several registered targets, `--help` explains both. In this
+repo the same reporter runs as `npm run test:conformance:report` (against the mock, which skips
+nothing) and `npm run test:conformance:example` (against the template, which skips everything).
+
+### A target must declare every capability
+
+Registration is refused unless the target answers **all twelve** flags with a boolean, and unless
+the provider it builds satisfies `assertProviderShape`. An unrecognised flag name is refused too.
+
+That strictness is the whole point. An omitted flag reads as absent, `needs()` then skips every test
+that wants it, and the suite reports green **by not running** — which has already happened twice in
+this repo's own history. So there is no silent default: a target that cannot answer a flag is a
+target that does not know what it supports.
+
+```
+Conformance target "steam" (from /tmp/consumer/steam-target.js) has an incomplete
+capability declaration:
+  does not answer: configurableToolResult, promoGrantAll
+  declares flags that are not capabilities: customShema (a typo here silently over-skips)
+```
+
+The built-in `mock` target does not restate its flags at all — it reads them off a freshly
+constructed `MockProvider`, for the same reason.
+
+The provider contract is checked at registration where the target can be built with no arguments,
+and otherwise on the first provider a test asks for. If neither happened — every test skipped, so
+nothing was ever built — the report says so rather than let "0 failed" imply the binding was
+checked.
 
 Do not stub a capability to make tests pass. A `virtualClock` that returns without moving time
 turns every drop test into a tautology.
@@ -303,6 +384,7 @@ turns every drop test into a tautology.
 | `lib/steamworks.js` | The steamworks.js-shaped façade, the `bigint` boundary, `EResult` / `SteamCallback` / `SteamItemFlags`, `SteamInventoryError`. |
 | `lib/provider.js` | `MockProvider` — Steam's async, handle-based protocol over the engine; result handles, dispatch, leak tracking, save/load passthrough. |
 | `lib/provider-interface.js` | The contract both implementations satisfy, plus `CAPABILITIES` and `assertProviderShape`. |
+| `lib/conformance.js` | Conformance target registration: `STEAM_MOCK_TARGET` resolution, `registerTarget`, and the validation that refuses an under-declared target. |
 | `lib/engine.js` | Exchange resolution, bundle and generator expansion, tag propagation, drops, promos, dynamic properties, transactions, `DEFAULT_OPTIONS`. |
 | `lib/matching.js` | Max-flow material assignment (Edmonds–Karp on a tiny bipartite graph). |
 | `lib/grammar.js` | Parsers for every delimited string in an itemdef: `exchange`, `bundle`, tags, tag matchers, `promo`, `tag_generator_values`, Steam timestamps. Total — a parse failure means the schema would be rejected on upload. |
@@ -314,6 +396,9 @@ turns every drop test into a tautology.
 | `lib/rng.js` | Seedable mulberry32; 32 bits of state, so save/restore is one integer. |
 | `lib/await.js` | `awaitResult`, `call`, `inventoryByDef`. |
 | `client.d.ts` | Hand-written TypeScript declarations, styled after steamworks.js's own `client.d.ts`. |
+| `test/harness.js` | The provider-agnostic harness the conformance suite is written against: `createProvider`, `needs`, the inventory helpers. |
+| `test/example-steam-target.js` | A runnable target template to copy into your own project — every capability declared, with its reasoning. |
+| `test/conformance-report.js` | Runs the conformance suite against a target and summarises what went unverified, and why. |
 | `docs/` | Valve's five schema pages, mirrored, plus `coverage.md`. |
 
 ## Implemented semantics
@@ -552,6 +637,15 @@ npm run test:conformance  # 183 against the `mock` target
 Node's built-in test runner, no framework, no dependencies. The conformance suite reports **0
 skipped** because `MockProvider` advertises every capability; against a real binding the skip count
 is the honest measure of what remains unverified.
+
+```
+npm run test:conformance:report   # the same 183, with the skip summary (nothing skipped)
+npm run test:conformance:example  # against test/example-steam-target.js: 183 skipped, 0 run
+```
+
+The second is a smoke test of the registration mechanism itself: the template declares every
+capability `false`, so every test skips and none errors — which is what a real binding that is not
+yet wired up should also produce.
 
 Three demos, all against `examples/economy.js`:
 

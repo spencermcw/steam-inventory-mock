@@ -5,12 +5,26 @@
  *
  * Provider-agnostic test harness. Everything under test/conformance/ is written
  * against this, never against MockProvider directly, so the same behavioural
- * suite can later be pointed at the native SteamProvider:
+ * suite can be pointed at a real ISteamInventory binding — including from a
+ * project that merely installed this package:
  *
- *   STEAM_MOCK_PROVIDER=steam node --test test/conformance/*.test.js
+ *   # against the mock, the default
+ *   node --test test/conformance/*.test.js
+ *
+ *   # against your own binding, from your own project
+ *   STEAM_MOCK_TARGET=./steam-target.js \
+ *     node --test node_modules/steam-inventory-mock/test/conformance/*.test.js
+ *
+ *   # the same run, with a summary of what went unverified
+ *   node node_modules/steam-inventory-mock/test/conformance-report.js --target ./steam-target.js
  *
  * Divergence between mock and reality then shows up as a failing test in CI,
  * continuously — rather than as a surprise during final integration.
+ *
+ * Targets are registered from outside this file, because for everyone but this
+ * repo this file is in node_modules and is overwritten on reinstall. The
+ * mechanism and its validation live in lib/conformance.js; a copyable target
+ * lives in test/example-steam-target.js.
  *
  * Providers advertise capabilities; tests that need something a provider cannot
  * physically do (time travel, fixture schemas, sandbox grants) skip rather than
@@ -19,77 +33,36 @@
  */
 
 const { MockProvider, call, RESULT } = require('../index');
+const { registerTarget, resolveTarget, verifyShape, skipReason } = require('../lib/conformance');
 
 // ─── Targets ──────────────────────────────────────────────────────────────────
 
-const TARGETS = {
-  mock: {
-    name: 'mock',
-    // Derived from the provider rather than restated here. A hand-maintained
-    // copy of this list has drifted from the canonical one twice already, and
-    // the failure is quiet in the worst direction: a flag missing here makes
-    // `needs()` skip a whole file, so the suite goes green by not running.
-    // MockProvider spreads CAPABILITIES, so asking it is always current.
-    get capabilities() {
-      return new MockProvider({ schema: { appid: 0, items: [] } }).capabilities;
-    },
-    create(options = {}) {
-      return new MockProvider({ seed: 'conformance', ...options });
-    },
+registerTarget({
+  name: 'mock',
+  // Derived from the provider rather than restated here. A hand-maintained
+  // copy of this list has drifted from the canonical one twice already, and
+  // the failure is quiet in the worst direction: a flag missing here makes
+  // `needs()` skip a whole file, so the suite goes green by not running.
+  // MockProvider spreads CAPABILITIES, so asking it is always current.
+  //
+  // A registered target has no such licence: lib/conformance.js refuses one
+  // that does not answer every flag, so a third party cannot under-declare by
+  // omission the way this file once could.
+  get capabilities() {
+    return new MockProvider({ schema: { appid: 0, items: [] } }).capabilities;
   },
+  create(options = {}) {
+    return new MockProvider({ seed: 'conformance', ...options });
+  },
+});
 
-  // A SteamProvider target registers here once the native binding exists. It
-  // will advertise none of the capabilities above, and the suite will report
-  // exactly which semantics went unverified as a result. A skip is honest —
-  // it says "this semantic is unverified here" — where a green test against
-  // a stubbed-out capability would be a lie. A worked example, for whoever
-  // wires up the native binding:
-  //
-  //   const { SteamProvider } = require('../lib/steam-provider');
-  //
-  //   steam: {
-  //     name: 'steam',
-  //     capabilities: {
-  //       // You cannot time-travel live Steam.
-  //       virtualClock: false,
-  //       // A real provider loads the app's uploaded itemdefs, not a fixture.
-  //       customSchema: false,
-  //       // GenerateItems is sandbox-only (apps in development), not something
-  //       // a live provider can invoke.
-  //       sandboxGrants: false,
-  //       // Item drops and other rolls happen server-side; there is no seed
-  //       // to fix them against.
-  //       deterministicRng: false,
-  //       // A real provider is not given a human-readable failure reason.
-  //       failureReasons: false,
-  //       // drop_interval / drop_limit / promo recurrence are enforced
-  //       // server-side; there is no client override to exercise.
-  //       gatingBypass: false,
-  //       // An account's owned apps / achievements / playtime are facts, not
-  //       // something a test can arrange.
-  //       entitlements: false,
-  //       // Steam's surplus behaviour is fixed and unmeasured.
-  //       configurableSurplus: false,
-  //       // Steam holds the inventory server-side and neither hands it over
-  //       // nor takes it back.
-  //       persistence: false,
-  //     },
-  //     create(options = {}) {
-  //       return new SteamProvider(options);
-  //     },
-  //   },
-  //
-  // Run the suite against it with:
-  //
-  //   STEAM_MOCK_PROVIDER=steam node --test test/conformance/*.test.js
-};
+// A real SteamProvider target is registered from the outside — see
+// test/example-steam-target.js for a runnable template declaring every
+// capability, with the reasoning for each. It advertises almost none of them,
+// and the suite then reports exactly which semantics went unverified as a
+// result.
 
-const targetName = process.env.STEAM_MOCK_PROVIDER || 'mock';
-const target = TARGETS[targetName];
-if (!target) {
-  throw new Error(`Unknown STEAM_MOCK_PROVIDER "${targetName}" (known: ${Object.keys(TARGETS).join(', ')})`);
-}
-
+const target = resolveTarget();
 const capabilities = target.capabilities;
 
 /** Build a provider for one test. `schema` requires the customSchema capability. */
@@ -97,13 +70,25 @@ function createProvider(options = {}) {
   if (options.schema && !capabilities.customSchema) {
     throw new Error(`Provider "${target.name}" cannot load a fixture schema`);
   }
-  return target.create(options);
+  const provider = target.create(options);
+  // The contract check runs at registration where the target can be built with
+  // no options; targets that need arguments (the mock refuses to guess a
+  // schema) are checked here instead, on the first provider they hand over.
+  if (!target.shapeVerified) verifyShape(target, provider);
+  return provider;
 }
 
 /** `{ skip: needs('virtualClock') }` on a node:test case. */
 function needs(...caps) {
+  const unknown = caps.filter(c => !(c in capabilities));
+  if (unknown.length > 0) {
+    // A misspelt flag is never present, so the test would skip forever while
+    // reading as covered — the same silent-green failure the capability model
+    // exists to prevent, one layer up.
+    throw new Error(`needs(): no such capability: ${unknown.join(', ')}`);
+  }
   const missing = caps.filter(c => !capabilities[c]);
-  return missing.length === 0 ? false : `provider "${target.name}" lacks: ${missing.join(', ')}`;
+  return missing.length === 0 ? false : skipReason(target.name, missing);
 }
 
 // ─── Inventory helpers ────────────────────────────────────────────────────────

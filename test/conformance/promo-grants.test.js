@@ -97,7 +97,7 @@ test('addPromoItems: an unknown itemdefid is a parameter error granting nothing'
 
 // ─── GrantPromoItems ────────────────────────────────────────────────────────
 
-test('grantPromoItems: grants the bulk-eligible item and does not grant the granted_manually one', { skip: h.needs('customSchema', 'entitlements') }, async () => {
+test('grantPromoItems: grants the bulk-eligible item and does not grant the granted_manually one', { skip: h.needs('promoGrantAll', 'customSchema', 'entitlements') }, async () => {
   const p = provider();
   h.setEntitlements(p, { ownsApps: [440] });
 
@@ -111,7 +111,7 @@ test('grantPromoItems: grants the bulk-eligible item and does not grant the gran
   assert.equal(await h.countOf(p, 9130), 0);
 });
 
-test('grantPromoItems: owed nothing succeeds with an empty list, not an error', { skip: h.needs('customSchema') }, async () => {
+test('grantPromoItems: owed nothing succeeds with an empty list, not an error', { skip: h.needs('promoGrantAll', 'customSchema') }, async () => {
   const p = provider();
   // Claim every promo this fresh account is ever going to qualify for without
   // entitlements or time passing, via the singular call — establishing a
@@ -125,7 +125,7 @@ test('grantPromoItems: owed nothing succeeds with an empty list, not an error', 
   assert.equal(result.granted, false);
 });
 
-test('grantPromoItems: idempotent — a second run grants nothing further', { skip: h.needs('customSchema', 'entitlements') }, async () => {
+test('grantPromoItems: idempotent — a second run grants nothing further', { skip: h.needs('promoGrantAll', 'customSchema', 'entitlements') }, async () => {
   const p = provider();
   h.setEntitlements(p, { ownsApps: [440] });
 
@@ -145,7 +145,7 @@ test('grantPromoItems: idempotent — a second run grants nothing further', { sk
 
 // ─── Eligible promo item definition ids ────────────────────────────────────
 
-test('eligible promo ids: empty before request, populated after, includes granted_manually items', { skip: h.needs('customSchema') }, async () => {
+test('eligible promo ids: empty before request, populated after, includes granted_manually items', { skip: h.needs('promoGrantAll', 'customSchema') }, async () => {
   const p = provider();
   assert.deepEqual(p.getEligiblePromoItemDefinitionIDs(), [], 'reading before requesting returns empty, not a fresh computation');
 
