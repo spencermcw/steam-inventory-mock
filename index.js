@@ -13,7 +13,13 @@
  */
 
 const { MockProvider } = require('./lib/provider');
-const { Engine, RESULT, DEFAULT_OPTIONS, MAX_DROPS_PER_WINDOW } = require('./lib/engine');
+const {
+  Engine,
+  RESULT,
+  DEFAULT_OPTIONS,
+  MAX_DROPS_PER_WINDOW,
+  k_SteamItemInstanceIDInvalid,
+} = require('./lib/engine');
 const { InventoryProvider, assertProviderShape, CAPABILITIES } = require('./lib/provider-interface');
 const { loadSchema, Schema, ItemDef } = require('./lib/schema');
 const { Account, ItemInstance } = require('./lib/inventory');
@@ -36,6 +42,8 @@ module.exports = {
   RESULT,
   DEFAULT_OPTIONS,
   MAX_DROPS_PER_WINDOW,
+  /** Pass as TransferItemQuantity's destination to split rather than merge. */
+  k_SteamItemInstanceIDInvalid,
 
   // Schema
   loadSchema,

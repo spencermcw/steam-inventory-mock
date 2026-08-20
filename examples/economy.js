@@ -152,6 +152,63 @@ const items = [
     drop_start_time: '20260601T000000Z',
   },
 
+  // ═══ 9100+: fixtures for tag tools, accessories, dynamic properties and ═══
+  // ═══ promo grants — nothing in the package consumes these yet, but the  ═══
+  // ═══ upcoming work on lib/engine.js needs them, so they're laid down    ═══
+  // ═══ ahead of time, copied straight from Valve's own worked examples.  ═══
+
+  // ── Tag tools: simple paint example (docs/tools.html, "Simple Example") ──
+  // A tag_tool applies its `tags` to the target and, per Valve, first strips
+  // any tags matching `tags_to_remove_on_tool_use` so re-painting doesn't
+  // stack duplicate tag categories. The target opts in per category via
+  // `allowed_tags_from_tools` — without it the tool has nothing to write to.
+  { itemdefid: 9100, name: 'Red Paint Can', type: 'tag_tool', tradable: false, tags: 'paint_color:red', tags_to_remove_on_tool_use: 'paint_color' },
+  { itemdefid: 9101, name: 'Hat', type: 'item', tradable: false, allowed_tags_from_tools: 'paint_color' },
+  // A tool that only strips — no `tags` of its own, so applying it just
+  // clears whatever paint_color the target is currently carrying.
+  { itemdefid: 9102, name: 'Paint Stripper', type: 'tag_tool', tradable: false, tags_to_remove_on_tool_use: 'paint_color' },
+
+  // ── Tag tools: random paint via tag_generator (docs/tools.html, "Tag Generator Example") ──
+  // Same paint_color category, but the tool picks a value by weight instead
+  // of hard-coding one: 33/33/33/1 out of 100, so gold is a ~1% pull.
+  { itemdefid: 9103, name: 'Paint Color Generator', type: 'tag_generator', tradable: false, tag_generator_name: 'paint_color', tag_generator_values: 'red:33;blue:33;green:33;gold:1' },
+  { itemdefid: 9104, name: 'Random Paint Can', type: 'tag_tool', tradable: false, tag_generators: '9103', tags_to_remove_on_tool_use: 'paint_color' },
+
+  // ── Accessories: backpack and stickers (docs/accessories.html) ──
+  // `accessory_tag` marks an item as customizable with a per-item tag
+  // category; `accessory_limit` caps how many can be attached (default 4 if
+  // omitted — see 9113 below). Each sticker is its own tag_tool whose `tags`
+  // applies the accessory category with the sticker's *own* itemdefid as the
+  // value, exactly as Valve's example (itemdefid 1001 -> `sticker:1001`).
+  { itemdefid: 9110, name: 'Everyday Backpack', type: 'item', tradable: false, accessory_tag: 'sticker', accessory_limit: 3, allowed_tags_from_tools: 'sticker' },
+  { itemdefid: 9111, name: 'Blue Star Sticker', type: 'tag_tool', tradable: false, tags: 'sticker:9111' },
+  { itemdefid: 9112, name: 'Red Star Sticker', type: 'tag_tool', tradable: false, tags: 'sticker:9112' },
+  // No `accessory_limit` at all — Valve documents a default of 4 for items
+  // that omit it, so this item is the fixture for testing that default.
+  { itemdefid: 9113, name: 'Trophy Case', type: 'item', tradable: false, accessory_tag: 'badge' },
+
+  // ── Dynamic property restriction pair (docs/tools.html, "Dynamic Properties Restriction Example") ──
+  // Valve's example gates a dynamic property (e.g. "kills") on the item
+  // carrying a `stat_tracker` tag. The rocket launcher starts without that
+  // tag — and without `allowed_tags_from_tools` a tag_tool couldn't write it
+  // at all — so it declares the category up front; once the Kill Stat
+  // Tracker is applied, the dynamic property becomes settable.
+  { itemdefid: 9120, name: 'Rocket Launcher', type: 'item', tradable: false, allowed_tags_from_tools: 'stat_tracker' },
+  { itemdefid: 9121, name: 'Kill Stat Tracker', type: 'tag_tool', tradable: false, tags: 'stat_tracker:kills', tags_to_remove_on_tool_use: 'stat_tracker:kills' },
+
+  // ── Promo grants: granted_manually (docs/schema.html) ──
+  // `granted_manually` defaults to false per Valve. true restricts the item
+  // to explicit AddPromoItem(s) calls — a bulk GrantPromoItems must skip it.
+  { itemdefid: 9130, name: 'Manual-Only Badge', type: 'item', auto_stack: true, tradable: false, promo: 'manual', granted_manually: true },
+  // Non-manual promo rule, `granted_manually` omitted (i.e. false): a bulk
+  // GrantPromoItems call should pick this one up.
+  { itemdefid: 9131, name: 'Bulk-Eligible Reward', type: 'item', auto_stack: true, tradable: false, promo: 'owns:440' },
+
+  // ── Stack-transfer coverage ──
+  // No new itemdefs needed: 9001 (Alpha) and 9002 (Beta) are both plain
+  // `auto_stack: true` items with no exchange/bundle entanglements, so
+  // they're the safe pair to split and merge stacks against.
+
   // ── Pathological: a bundle that contains itself, to prove rollback on throw ──
   { itemdefid: 9099, name: 'Recursive Bundle', type: 'bundle', tradable: false, bundle: '9099x1' },
 ];
