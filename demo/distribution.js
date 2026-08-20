@@ -3,11 +3,17 @@
 /**
  * demo/distribution.js
  *
- * Roll a real generator from dist/itemdefs.json many times under a fixed seed
- * and print the observed yield distribution against the declared weights.
+ * Roll a generator from this package's own example economy
+ * (examples/economy.js) many times under a fixed seed and print the observed
+ * yield distribution against the declared weights.
  *
- *   node mock/demo/distribution.js [cls] [rolls] [seed]
- *   node mock/demo/distribution.js exec_op_harvest_102 20000 alpha
+ *   node demo/distribution.js [itemdefid] [rolls] [seed]
+ *   node demo/distribution.js 9030 20000 alpha
+ *
+ * The default, 9030 "Weighted Generator", exists in the economy for exactly
+ * this: its bundle is `9001x70;9002x20;9003x10`, so the expected percentages
+ * are exact round numbers (70% / 20% / 10%) and the printed error column
+ * means something at a glance.
  *
  * Two things this demonstrates, both preconditions for the balance simulator:
  * the roll is unbiased with respect to the declared weights, and it is exactly
@@ -19,20 +25,24 @@
  */
 
 const { Engine } = require('../index');
+const economy = require('../examples/economy');
 
 // ─── Arguments ────────────────────────────────────────────────────────────────
 
-const cls = process.argv[2] || 'exec_operation_101';
+const itemdefid = Number(process.argv[2] || 9030);
 const rolls = Number(process.argv[3] || 20000);
 const seed = process.argv[4] || 'distribution';
 
 // ─── Roll ─────────────────────────────────────────────────────────────────────
 
 function run(engineSeed) {
-  const engine = new Engine({ seed: engineSeed });
-  const generator = engine.schema.requireCls(cls);
+  const engine = new Engine({ schema: economy, seed: engineSeed });
+  const generator = engine.schema.get(itemdefid);
+  if (!generator) {
+    throw new Error(`Unknown itemdefid ${itemdefid}`);
+  }
   if (generator.bundle.length === 0) {
-    throw new Error(`itemdef "${cls}" (${generator.type}) has no weighted bundle`);
+    throw new Error(`itemdef ${itemdefid} "${generator.name}" (${generator.type}) has no weighted bundle`);
   }
 
   const account = engine.createAccount('sim');
@@ -58,7 +68,7 @@ function run(engineSeed) {
 const { engine, generator, outcomes, items } = run(seed);
 const totalWeight = generator.bundle.reduce((sum, e) => sum + e.quantity, 0);
 
-console.log(`Generator: ${generator.name}  [${generator.cls}]  type=${generator.type}`);
+console.log(`Generator: ${generator.name}  [itemdefid ${generator.itemdefid}]  type=${generator.type}`);
 console.log(`Wire bundle: ${generator.raw.bundle}`);
 console.log(`Rolls: ${rolls}   seed: "${seed}"\n`);
 
@@ -69,7 +79,7 @@ for (const entry of generator.bundle) {
   const expected = entry.quantity / totalWeight;
   const observed = (outcomes.get(entry.itemdefid) || 0) / rolls;
   console.log(
-    `${(def.cls || def.name).slice(0, 34).padEnd(36)} ${String(entry.quantity).padStart(6)}   ` +
+    `${def.name.slice(0, 34).padEnd(36)} ${String(entry.quantity).padStart(6)}   ` +
       `${(expected * 100).toFixed(2).padStart(7)}%   ${(observed * 100).toFixed(2).padStart(7)}%   ` +
       `${((observed - expected) * 100).toFixed(3).padStart(7)}pp`
   );
@@ -77,9 +87,9 @@ for (const entry of generator.bundle) {
 
 console.log('\nItems granted (per 100 rolls)');
 console.log('─'.repeat(78));
-for (const [itemdefid, quantity] of [...items].sort((a, b) => b[1] - a[1])) {
-  const def = engine.schema.get(itemdefid);
-  console.log(`  ${(def.cls || def.name).padEnd(36)} ${((quantity / rolls) * 100).toFixed(2).padStart(8)}`);
+for (const [grantedId, quantity] of [...items].sort((a, b) => b[1] - a[1])) {
+  const def = engine.schema.get(grantedId);
+  console.log(`  ${def.name.padEnd(36)} ${((quantity / rolls) * 100).toFixed(2).padStart(8)}`);
 }
 
 // ─── Reproducibility ──────────────────────────────────────────────────────────

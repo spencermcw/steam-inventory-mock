@@ -21,8 +21,18 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { init, SteamCallback, EResult, SteamItemFlags, SteamInventoryError, RESULT, MockProvider } = require('../../index');
+const {
+  init,
+  SteamCallback,
+  EResult,
+  SteamItemFlags,
+  SteamInventoryError,
+  RESULT,
+  MockProvider,
+  k_SteamItemInstanceIDInvalid,
+} = require('../../index');
 const { ASYNC_CALLS, SYNC_CALLS } = require('../../lib/steamworks');
+const { ITEM_FLAGS } = require('../../lib/engine');
 const fixtures = require('../../examples/economy');
 
 const client = (options = {}) => init({ schema: fixtures, seed: 'facade', ...options });
@@ -31,6 +41,12 @@ const client = (options = {}) => init({ schema: fixtures, seed: 'facade', ...opt
 async function seedOne(c, defId, quantity = 1) {
   const items = await c.inventory.generateItems([defId], [quantity]);
   return items[0];
+}
+
+/** The paint can (9100) held, as a one-entry material list. */
+async function hatTool(c) {
+  const tool = (await c.inventory.getAllItems()).find(i => i.itemDefId === 9100);
+  return [tool.itemId];
 }
 
 // ─── Shape ────────────────────────────────────────────────────────────────────
@@ -221,18 +237,103 @@ test('facade: an item with no properties gives {}, not null', async () => {
   assert.deepEqual(item.dynamicProps, {});
 });
 
-test('facade: flags report NoTrade from the itemdef and fabricate nothing else', async () => {
+test('facade: flags report NoTrade from the itemdef, on every row of every call', async () => {
   const c = client();
   const item = await seedOne(c, 9001); // the fixture is tradable: false throughout
   assert.equal(item.flags & SteamItemFlags.NoTrade, SteamItemFlags.NoTrade);
+  assert.equal(item.flags & SteamItemFlags.ItemRemoved, 0, 'a grant removed nothing');
+  assert.equal(item.flags & SteamItemFlags.ItemConsumed, 0, 'and consumed nothing');
 
-  // Removed/Consumed say *why a row is in a result set*, and this library's
-  // rows carry no such provenance — a consumed stack and a split source that
-  // emptied are the same row. Reporting 0 is the honest answer; see flagsFor.
+  // NoTrade is a fact about the definition, so it survives alongside the
+  // provenance bits rather than being replaced by them.
   const consumed = await c.inventory.consumeItem(item.itemId, 1);
   assert.equal(consumed[0].quantity, 0);
-  assert.equal(consumed[0].flags & SteamItemFlags.ItemConsumed, 0);
-  assert.equal(consumed[0].flags & SteamItemFlags.ItemRemoved, 0);
+  assert.equal(consumed[0].flags & SteamItemFlags.NoTrade, SteamItemFlags.NoTrade);
+  assert.equal(consumed[0].flags & SteamItemFlags.ItemConsumed, SteamItemFlags.ItemConsumed);
+  assert.equal(consumed[0].flags & SteamItemFlags.ItemRemoved, SteamItemFlags.ItemRemoved);
+});
+
+test('facade: SteamItemFlags carries the same numbers the engine sets', () => {
+  // Two tables, one set of Valve constants — the same drift guard EResult has.
+  // A public enum that disagreed with the bits the engine writes would make
+  // every flag test in this file pass while telling callers the wrong thing.
+  assert.equal(ITEM_FLAGS.REMOVED, SteamItemFlags.ItemRemoved);
+  assert.equal(ITEM_FLAGS.CONSUMED, SteamItemFlags.ItemConsumed);
+  assert.equal(SteamItemFlags.NoTrade, 1 << 0);
+});
+
+test('facade: after a tag tool, ItemRemoved is what tells the dead target from the live one', async () => {
+  // The reason provenance exists at all. Under the default 'new-instance'
+  // policy this resolves to three rows, two of them itemDefId 9101, and
+  // `items.find(i => i.itemDefId === 9101)` picks by position — half the time
+  // an id the account no longer holds.
+  const c = client();
+  await c.inventory.generateItems([9100, 9101], [1, 1]);
+  const before = (await c.inventory.getAllItems()).find(i => i.itemDefId === 9101);
+
+  const rows = await c.inventory.exchangeItems(9101, [before.itemId, ...(await hatTool(c))]);
+  const hats = rows.filter(i => i.itemDefId === 9101);
+  assert.equal(hats.length, 2);
+
+  const destroyed = hats.find(i => i.flags & SteamItemFlags.ItemRemoved);
+  const replacement = hats.find(i => !(i.flags & SteamItemFlags.ItemRemoved));
+  assert.equal(destroyed.itemId, before.itemId);
+  assert.equal(destroyed.quantity, 0);
+  assert.equal(destroyed.flags & SteamItemFlags.ItemConsumed, 0, 'destroyed, not spent as material');
+  assert.notEqual(replacement.itemId, before.itemId);
+  assert.deepEqual(replacement.tags, ['paint_color:red']);
+
+  // And the id the caller should keep is the one the account still holds.
+  const held = (await c.inventory.getAllItems()).map(i => i.itemId);
+  assert.equal(held.includes(replacement.itemId), true);
+  assert.equal(held.includes(destroyed.itemId), false);
+
+  const tool = rows.find(i => i.itemDefId === 9100);
+  assert.equal(tool.flags & SteamItemFlags.ItemConsumed, SteamItemFlags.ItemConsumed);
+  assert.equal(tool.flags & SteamItemFlags.ItemRemoved, SteamItemFlags.ItemRemoved);
+});
+
+test("facade: under toolResultPolicy 'mutate' the target comes back unflagged", async () => {
+  const c = client({ toolResultPolicy: 'mutate' });
+  await c.inventory.generateItems([9100, 9101], [1, 1]);
+  const before = (await c.inventory.getAllItems()).find(i => i.itemDefId === 9101);
+
+  const rows = await c.inventory.exchangeItems(9101, [before.itemId, ...(await hatTool(c))]);
+  const hats = rows.filter(i => i.itemDefId === 9101);
+  assert.equal(hats.length, 1);
+  assert.equal(hats[0].itemId, before.itemId, 'the instance survives the call');
+  assert.equal(hats[0].flags & SteamItemFlags.ItemRemoved, 0);
+  assert.equal(hats[0].flags & SteamItemFlags.ItemConsumed, 0);
+});
+
+test('facade: exchange materials come back flagged consumed, the product does not', async () => {
+  const c = client();
+  const alpha = await seedOne(c, 9001, 2); // 9010 costs 9001x2
+  const rows = await c.inventory.exchangeItems(9010, [{ itemId: alpha.itemId, quantity: 2 }]);
+
+  const spent = rows.find(i => i.itemDefId === 9001);
+  assert.equal(spent.quantity, 0);
+  assert.equal(spent.flags & SteamItemFlags.ItemConsumed, SteamItemFlags.ItemConsumed);
+  assert.equal(spent.flags & SteamItemFlags.ItemRemoved, SteamItemFlags.ItemRemoved);
+
+  const product = rows.find(i => i.itemDefId === 9010);
+  assert.equal(product.flags & SteamItemFlags.ItemConsumed, 0);
+  assert.equal(product.flags & SteamItemFlags.ItemRemoved, 0);
+});
+
+test('facade: a split that empties its source flags it removed, never consumed', async () => {
+  const c = client();
+  const alpha = await seedOne(c, 9001, 2);
+
+  const rows = await c.inventory.transferItemQuantity(alpha.itemId, 2, k_SteamItemInstanceIDInvalid);
+  const source = rows.find(i => i.itemId === alpha.itemId);
+  const split = rows.find(i => i.itemId !== alpha.itemId);
+  assert.equal(source.quantity, 0);
+  assert.equal(source.flags & SteamItemFlags.ItemRemoved, SteamItemFlags.ItemRemoved);
+  assert.equal(source.flags & SteamItemFlags.ItemConsumed, 0, 'the quantity moved; nothing was spent');
+  assert.equal(split.quantity, 2);
+  assert.equal(split.flags & SteamItemFlags.ItemRemoved, 0);
+  assert.equal(split.flags & SteamItemFlags.ItemConsumed, 0);
 });
 
 test('facade: flags claim nothing while item definitions are still loading', async () => {

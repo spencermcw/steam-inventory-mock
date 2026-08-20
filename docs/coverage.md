@@ -12,7 +12,7 @@ schema pages mirrored in this directory.
 | Steam | Here | Status |
 |---|---|---|
 | `GetResultStatus` | `getResultStatus(handle)` | yes |
-| `GetResultItems` | `getResultItems(handle)` | yes |
+| `GetResultItems` | `getResultItems(handle)` | yes — rows carry `SteamItemDetails_t` fields including `m_unFlags` |
 | `GetResultItemProperty` | `getResultItemProperty(handle, index, prop)` | yes — incl. `tags` and `dynamic_props` |
 | `GetResultTimestamp` | `getResultTimestamp(handle)` | yes — virtual-clock stamped |
 | `CheckResultSteamID` | `checkResultSteamID(handle, accountId)` | yes |
@@ -124,6 +124,19 @@ Parsed into structure and acted on: `itemdefid`, `type`, `name`, `description`, 
 Every other field — including all extended/custom properties you define — is preserved on
 `ItemDef.raw` and readable through `getItemDefinitionProperty`, exactly as Steam returns extended
 schema properties.
+
+## Item flags (`SteamItemDetails_t::m_unFlags`)
+
+| Valve flag | Value | Status |
+|---|---|---|
+| `k_ESteamItemNoTrade` | `1 << 0` | yes — from the itemdef's `tradable` field |
+| `k_ESteamItemRemoved` | `1 << 8` | yes — the engine records why each result row is there |
+| `k_ESteamItemConsumed` | `1 << 9` | yes — same |
+
+This matters more than it sounds. An `ExchangeItems` under the default `toolResultPolicy` returns
+the consumed tool, the *destroyed* target and the *new* target — and the first two come back at
+quantity 0 with the same itemdefid as the third. Without flags, a caller looking for its result by
+itemdefid can silently pick the destroyed row.
 
 ## Beyond ISteamInventory
 

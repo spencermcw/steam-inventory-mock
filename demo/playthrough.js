@@ -3,117 +3,175 @@
 /**
  * demo/playthrough.js
  *
- * An end-to-end run against the real transpiled itemdefs (dist/itemdefs.json):
- * grant the new-player promo, run a harvest operation, attempt a craft the
- * player cannot afford, take a supply drop off the virtual clock.
+ * An end-to-end run against this package's own example economy
+ * (examples/economy.js), through the steamworks.js-shaped façade (init(), see
+ * lib/steamworks.js): namespaced calls, promises, bigint item ids,
+ * callback.register(). This file doubles as this package's worked API
+ * example — everything below is meant to be copy-pasteable against a real
+ * client, which is also why it is the one demo required to go through the
+ * façade rather than the handle-based provider underneath it.
  *
- *   node mock/demo/playthrough.js [seed]
+ *   node demo/playthrough.js [seed]
  *
- * Everything here goes through the async, handle-based provider — the same
- * calls the Godot client makes — so the printed transcript is what the game
- * would actually observe.
+ * The story: claim a promo (and watch a second claim grant nothing — it is
+ * once per account), run a successful exchange, watch an underfunded one fail
+ * with the inventory left byte-identical, paint an item with a tag tool, read
+ * the resulting per-item tag back, stamp a dynamic property and read that
+ * back too, then take a playtime drop through the virtual clock — refused at
+ * t+0, granted at t+drop_interval, refused again immediately after.
  */
 
-const { MockProvider, call } = require('../index');
+const { init, SteamCallback, SteamInventoryError } = require('../index');
+const economy = require('../examples/economy');
 
 // ─── Presentation ─────────────────────────────────────────────────────────────
 
 const seed = process.argv[2] || 'playthrough';
-const provider = new MockProvider({ seed });
+const client = init({ schema: economy, seed });
+const { inventory, callback, mock } = client;
 
-const nameOf = id => provider.getItemDefinitionProperty(id, 'name') || `#${id}`;
-const clsOf = id => provider.getItemDefinitionProperty(id, 'cls') || String(id);
-const idOf = cls => {
-  for (const id of provider.getItemDefinitionIDs()) {
-    if (provider.getItemDefinitionProperty(id, 'cls') === cls) return id;
-  }
-  throw new Error(`No itemdef with cls "${cls}"`);
-};
+const green = t => `\x1b[32m${t}\x1b[0m`;
+const red = t => `\x1b[31m${t}\x1b[0m`;
 
 function heading(text) {
   console.log(`\n\x1b[1m${text}\x1b[0m`);
   console.log('─'.repeat(text.length));
 }
 
-async function inventory() {
-  const result = await call(provider, 'getAllItems');
-  const rows = result.items
+/** Display by itemdef `name` — the property Steam actually defines, not an authoring convention. */
+const nameOf = id => inventory.getItemDefinitionProperty(id, 'name') || `#${id}`;
+
+function printInventory(items) {
+  const rows = items
     .slice()
-    .sort((a, b) => a.itemdefid - b.itemdefid)
-    .map(i => `  ${String(i.quantity).padStart(4)} × ${nameOf(i.itemdefid).padEnd(28)} [${clsOf(i.itemdefid)}]${i.tags ? `  {${i.tags}}` : ''}`);
+    .sort((a, b) => a.itemDefId - b.itemDefId)
+    .map(i => `  ${String(i.quantity).padStart(4)} × ${nameOf(i.itemDefId).padEnd(24)}${i.tags.length ? `  {${i.tags.join(';')}}` : ''}`);
   console.log(rows.length > 0 ? rows.join('\n') : '  (empty)');
-  return result.items;
 }
 
-/** Build an ExchangeItems material list ({ cls: qty }) from what is held. */
-async function materialsFor(spec) {
-  const result = await call(provider, 'getAllItems');
+/**
+ * Build an ExchangeItems material list ({itemId, quantity}) from what the
+ * account currently holds, by itemdefid — `pairs` is [itemDefId, wanted][]
+ * rather than an object, so a small id requested after a large one is not
+ * silently reordered by JS's integer-key iteration rules.
+ */
+async function materialsFor(pairs) {
+  const held = await inventory.getAllItems();
   const out = [];
-  for (const [cls, wanted] of Object.entries(spec)) {
-    const defId = idOf(cls);
+  for (const [itemDefId, wanted] of pairs) {
     let remaining = wanted;
-    for (const item of result.items.filter(i => i.itemdefid === defId)) {
+    for (const item of held.filter(i => i.itemDefId === itemDefId)) {
       if (remaining <= 0) break;
       const take = Math.min(remaining, item.quantity);
       out.push({ itemId: item.itemId, quantity: take });
       remaining -= take;
     }
-    if (remaining > 0) console.log(`  ! short ${remaining} × ${cls}`);
+    if (remaining > 0) console.log(`  ! short ${remaining} × ${nameOf(itemDefId)}`);
   }
   return out;
 }
 
-function report(label, result) {
-  const verdict = result.ok ? '\x1b[32mOK\x1b[0m' : `\x1b[31mFAILED (EResult ${result.status})\x1b[0m`;
-  console.log(`  ${label}: ${verdict}${result.reason ? ` — ${result.reason}` : ''}`);
-  for (const item of result.items) {
-    const change = item.quantity === 0 ? 'spent' : `→ ${item.quantity}`;
-    console.log(`    ${nameOf(item.itemdefid).padEnd(28)} ${change}`);
+/** A comparable snapshot of the whole inventory — bigint ids stringified, order-independent. */
+function snapshot(items) {
+  return JSON.stringify(
+    items
+      .map(i => ({ itemId: i.itemId.toString(), itemDefId: i.itemDefId, quantity: i.quantity, tags: i.tags, dynamicProps: i.dynamicProps }))
+      .sort((a, b) => a.itemId.localeCompare(b.itemId))
+  );
+}
+
+/**
+ * Run a promise-returning inventory call and print the outcome. The façade
+ * reports failure by rejecting (SteamInventoryError) rather than by handing
+ * back a status code — this is the one place that idiom is caught and turned
+ * into a printed line instead of an uncaught rejection.
+ */
+async function attempt(label, promise) {
+  try {
+    const items = await promise;
+    console.log(`  ${label}: ${green('OK')}${items.length === 0 ? ' (nothing)' : ''}`);
+    for (const item of items) {
+      console.log(`    ${nameOf(item.itemDefId).padEnd(24)} → ${item.quantity}${item.tags.length ? `  {${item.tags.join(';')}}` : ''}`);
+    }
+    return items;
+  } catch (err) {
+    if (!(err instanceof SteamInventoryError)) throw err;
+    console.log(`  ${label}: ${red('FAILED')} — ${err.message}`);
+    return null;
   }
 }
 
 // ─── Scenario ─────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`Mock Steam Inventory Service — seed "${seed}", ${provider.getItemDefinitionIDs().length} itemdefs from dist/itemdefs.json`);
+  console.log(`Mock Steam Inventory Service — seed "${seed}", ${inventory.getItemDefinitionIDs().length} itemdefs from examples/economy.js`);
 
-  heading('1. New player: AddPromoItem(welcome_bundle)');
-  report('addPromoItem', await call(provider, 'addPromoItem', idOf('welcome_bundle')));
-  await inventory();
+  // callback.register() in action: count every SteamInventoryResultReady this
+  // session raises, the same event a real napi binding would deliver.
+  let resultsSeen = 0;
+  const subscription = callback.register(SteamCallback.SteamInventoryResultReady, () => {
+    resultsSeen++;
+  });
+
+  heading('1. New player: AddPromoItem(Starter Kit)');
+  await attempt('addPromoItem(9060)', inventory.addPromoItem(9060));
+  printInventory(await inventory.getAllItems());
 
   heading('2. Promo is once-per-account');
-  report('addPromoItem (again)', await call(provider, 'addPromoItem', idOf('welcome_bundle')));
+  await attempt('addPromoItem(9060) again', inventory.addPromoItem(9060));
 
-  heading('3. Harvest: ExchangeItems(exec_operation_101)');
-  console.log(`  recipe: ${provider.getItemDefinitionProperty(idOf('exec_operation_101'), 'exchange')}`);
-  console.log(`  drop table: ${provider.getItemDefinitionProperty(idOf('exec_operation_101'), 'bundle')}`);
-  report(
-    'exchangeItems',
-    await call(provider, 'exchangeItems', idOf('exec_operation_101'), await materialsFor({ xp: 1, operation_101: 1, employee: 1 }))
-  );
-  await inventory();
+  heading('3. Exchange: ExchangeItems(Tag Recipe) — rarity:common*3');
+  console.log(`  recipe: ${inventory.getItemDefinitionProperty(9011, 'exchange')}`);
+  await attempt('exchangeItems(9011)', inventory.exchangeItems(9011, await materialsFor([[9001, 1], [9002, 2]])));
+  printInventory(await inventory.getAllItems());
 
-  heading('4. Craft the player cannot afford: ExchangeItems(craft_smelter)');
-  console.log(`  recipe: ${provider.getItemDefinitionProperty(idOf('craft_smelter'), 'exchange')}`);
-  const before = JSON.stringify((await call(provider, 'getAllItems')).items);
-  report('exchangeItems', await call(provider, 'exchangeItems', idOf('craft_smelter'), await materialsFor({ smelter_blueprint: 1, employee: 3, coal: 20, iron_ore: 15 })));
-  const after = JSON.stringify((await call(provider, 'getAllItems')).items);
-  console.log(`  inventory byte-identical after the failure: ${before === after ? '\x1b[32myes\x1b[0m' : '\x1b[31mNO\x1b[0m'}`);
+  heading('4. Underfunded exchange: ExchangeItems(Bundle Recipe) — no Gamma on hand');
+  console.log(`  recipe: ${inventory.getItemDefinitionProperty(9022, 'exchange')}`);
+  const before = snapshot(await inventory.getAllItems());
+  await attempt('exchangeItems(9022)', inventory.exchangeItems(9022, await materialsFor([[9003, 1]])));
+  const after = snapshot(await inventory.getAllItems());
+  console.log(`  inventory byte-identical after the failure: ${before === after ? green('yes') : red('NO')}`);
 
-  heading('5. Playtime drop: TriggerItemDrop(supply_drop)');
-  const supplyDrop = idOf('supply_drop');
-  const interval = Number(provider.getItemDefinitionProperty(supplyDrop, 'drop_interval'));
+  heading('5. Tag tool: paint the Hat with the Red Paint Can');
+  // Nothing in the economy grants a Red Paint Can or a Hat outright, so
+  // GenerateItems (sandbox-only on real Steam, genuine ISteamInventory)
+  // conjures the pair. ExchangeItems then applies the tool: the target's own
+  // itemdefid (9101) plus a material list of [tool, subject] is Valve's shape
+  // for a tag_tool application, not a recipe.
+  const conjured = await attempt('generateItems(Red Paint Can, Hat)', inventory.generateItems([9100, 9101], [1, 1]));
+  const tool = conjured.find(i => i.itemDefId === 9100);
+  const hat = conjured.find(i => i.itemDefId === 9101);
+  // toolResultPolicy is 'new-instance' by default: the target is destroyed and
+  // a fresh instance issued, so the touched set below includes the spent tool,
+  // the spent old Hat, and the new painted Hat — find it by what is left holding it.
+  const painted = await attempt('exchangeItems(Hat, [tool, hat])', inventory.exchangeItems(9101, [tool.itemId, hat.itemId]));
+  const paintedHat = painted.find(i => i.itemDefId === 9101 && i.quantity > 0);
+  console.log(`  Hat's per-item tags after painting: {${paintedHat.tags.join(';')}}`);
+
+  heading('6. Dynamic property: stamp and read back');
+  const handle = inventory.startUpdateProperties();
+  inventory.setPropertyInt(handle, paintedHat.itemId, 'enchant_level', 3);
+  const updated = await attempt('submitUpdateProperties', inventory.submitUpdateProperties(handle));
+  console.log(`  dynamicProps on the painted Hat: ${JSON.stringify(updated[0].dynamicProps)}`);
+
+  heading('7. Virtual clock: TriggerItemDrop(Daily Drop)');
+  const interval = Number(inventory.getItemDefinitionProperty(9050, 'drop_interval'));
   console.log(`  drop_interval: ${interval} min of playtime`);
-  report('triggerItemDrop (t+0)', await call(provider, 'triggerItemDrop', supplyDrop));
-  provider.advanceTime(interval);
-  report(`triggerItemDrop (t+${interval})`, await call(provider, 'triggerItemDrop', supplyDrop));
-  report('triggerItemDrop (immediately after)', await call(provider, 'triggerItemDrop', supplyDrop));
+  await attempt('triggerItemDrop (t+0)', inventory.triggerItemDrop(9050));
+  mock.advanceTime(interval);
+  await attempt(`triggerItemDrop (t+${interval})`, inventory.triggerItemDrop(9050));
+  await attempt('triggerItemDrop (immediately after)', inventory.triggerItemDrop(9050));
 
-  heading('6. Final inventory');
-  await inventory();
+  heading('8. Final inventory');
+  printInventory(await inventory.getAllItems());
 
-  const leaked = provider.leakedResults();
-  console.log(`\nUndestroyed result handles: ${leaked.length}`);
+  subscription.disconnect();
+  // runCallbacks() exists for shape parity with steamworks.js's host loop; it
+  // is not needed here (every await above already let pending work land), but
+  // one call demonstrates it costs nothing to include in a real client's loop.
+  await client.runCallbacks();
+  console.log(`\nSteamInventoryResultReady callbacks observed: ${resultsSeen}`);
+  console.log(`Undestroyed result handles: ${mock.leakedResults().length}`);
 }
 
 main().catch(err => {
