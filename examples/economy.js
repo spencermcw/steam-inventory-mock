@@ -1,15 +1,16 @@
 'use strict';
 
 /**
- * fixtures/synthetic.js
+ * examples/economy.js
  *
- * Hand-written itemdefs in Steam's *wire* format (delimited strings, exactly as
- * dist/itemdefs.json carries them) covering grammar corners the shipped content
- * does not currently exercise — multi-recipe exchanges, tag_generators,
- * drop windows, promo recurrence, non-stacking items.
+ * The example economy for this package: a small, complete, hand-written
+ * itemdef set in Steam's *wire* format (delimited strings, exactly as a real
+ * itemdefs.json carries them). The test suite loads it as its fixture schema,
+ * and the demos run against it — one economy, exercised both ways.
  *
- * Content-driven tests use the real transpiler output instead; see
- * conformance/shipped-content.test.js.
+ * The comments on each block below are the documentation of what that block
+ * demonstrates: multi-recipe exchanges, tag operands, nested bundles, tag
+ * generators, drop windows and limits, promo recurrence, non-stacking items.
  */
 
 // ─── Base materials ───────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ const items = [
   { itemdefid: 9021, name: 'Inner Bundle', type: 'bundle', tradable: false, bundle: '9001x3' },
   { itemdefid: 9022, name: 'Bundle Recipe', type: 'bundle', tradable: false, exchange: '9003x1', bundle: '9001x2;9002x2' },
 
-  // ── requires round-trip (what the transpiler emits for `requires:`) ──
+  // ── requires round-trip: check ownership of a facility without spending it ──
   { itemdefid: 9091, name: 'Facility', type: 'item', auto_stack: true, tradable: false },
   {
     itemdefid: 9090,
@@ -158,11 +159,4 @@ const items = [
 module.exports = {
   appid: 4522590,
   items,
-  /** A copy of the fixture set with one itemdef marked tradable. */
-  withTradableItem() {
-    return {
-      appid: 4522590,
-      items: [...items, { itemdefid: 9999, name: 'Illegal Tradable', type: 'item', tradable: true }],
-    };
-  },
 };

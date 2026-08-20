@@ -3,23 +3,19 @@
 /**
  * unit/schema.test.js — ingesting Steam's wire format.
  *
- * The load is strict on purpose: reading dist/itemdefs.json (not the YAML) makes
- * this an integration test of the transpiler, and a dangling reference in its
- * output should fail loudly here rather than at runtime on Steam.
+ * The load is strict on purpose: a dangling reference or malformed delimited
+ * string in whatever pipeline produced the itemdef file should fail loudly
+ * here, at load time, rather than at runtime on Steam.
  */
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { loadSchema, DEFAULT_SCHEMA_PATH } = require('../../index');
-const fixtures = require('../fixtures/synthetic');
-
-test('schema: the transpiler output loads clean', () => {
-  const schema = loadSchema(DEFAULT_SCHEMA_PATH);
-  assert.deepEqual(schema.report.errors, []);
-  assert.ok(schema.size() > 100);
-  assert.ok(schema.appid > 0);
-});
+const { loadSchema } = require('../../index');
+const fixtures = require('../../examples/economy');
 
 test('schema: delimited fields are pre-parsed into structure', () => {
   const schema = loadSchema(fixtures);
@@ -32,13 +28,6 @@ test('schema: delimited fields are pre-parsed into structure', () => {
   assert.equal(generator.bundle[0].quantity, 70, 'weights live in the quantity slot');
 
   assert.ok(schema.get(9001).tagTokens.has('rarity:common'));
-});
-
-test('schema: cls lookup works both ways on shipped content', () => {
-  const schema = loadSchema(DEFAULT_SCHEMA_PATH);
-  const xp = schema.requireCls('xp');
-  assert.equal(schema.get(xp.itemdefid).cls, 'xp');
-  assert.throws(() => schema.requireCls('no_such_cls'), /Unknown cls/);
 });
 
 test('schema: dangling references are load errors', () => {
@@ -82,7 +71,25 @@ test('schema: a tag operand matching no itemdef is a warning, not an error', () 
   assert.match(schema.report.warnings.join('\n'), /nobody:home/);
 });
 
-test('schema: the shipped content set has no warnings either', () => {
-  const schema = loadSchema(DEFAULT_SCHEMA_PATH);
-  assert.deepEqual(schema.report.warnings, []);
+test('schema: loads from a real file on disk', () => {
+  // The only test in this file that exercises the fs read path — everything
+  // else above hands loadSchema a parsed object directly. This is the
+  // acceptance check that the package works against a fresh Steam-format
+  // itemdef file with no host-project files present.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-inventory-mock-'));
+  const file = path.join(dir, 'itemdefs.json');
+  try {
+    fs.writeFileSync(file, JSON.stringify(fixtures));
+    const schema = loadSchema(file);
+    assert.deepEqual(schema.report.errors, []);
+    assert.ok(schema.get(9001), 'a known itemdef came back');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('schema: loadSchema() with no source is a hard error', () => {
+  // The library ships with no default schema, on purpose: guessing at one is
+  // how a mock ends up silently validating the wrong content.
+  assert.throws(() => loadSchema(), /requires an itemdef source/);
 });

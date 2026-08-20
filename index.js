@@ -15,13 +15,14 @@
 const { MockProvider } = require('./lib/provider');
 const { Engine, RESULT, DEFAULT_OPTIONS, MAX_DROPS_PER_WINDOW } = require('./lib/engine');
 const { InventoryProvider, assertProviderShape, CAPABILITIES } = require('./lib/provider-interface');
-const { loadSchema, Schema, ItemDef, DEFAULT_SCHEMA_PATH } = require('./lib/schema');
+const { loadSchema, Schema, ItemDef } = require('./lib/schema');
 const { Account, ItemInstance } = require('./lib/inventory');
 const { saveState, loadState, readSave, writeSave, SAVE_VERSION, SAVE_KIND } = require('./lib/persistence');
 const { VirtualClock, RealClock, MS_PER_MINUTE } = require('./lib/clock');
 const { Rng } = require('./lib/rng');
 const { awaitResult, call, inventoryByDef } = require('./lib/await');
 const grammar = require('./lib/grammar');
+const exampleEconomy = require('./examples/economy');
 
 module.exports = {
   // Providers
@@ -40,7 +41,6 @@ module.exports = {
   loadSchema,
   Schema,
   ItemDef,
-  DEFAULT_SCHEMA_PATH,
 
   // State
   Account,
@@ -67,4 +67,7 @@ module.exports = {
 
   // Wire-format parsers
   grammar,
+
+  // Example content
+  exampleEconomy,
 };

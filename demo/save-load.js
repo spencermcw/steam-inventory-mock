@@ -82,7 +82,7 @@ async function materialsFor(provider, spec) {
 // ─── Scenario ─────────────────────────────────────────────────────────────────
 
 async function main() {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lsc-save-')), 'player.json');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'steam-inventory-mock-save-')), 'player.json');
 
   // ── Session ──
   const before = new MockProvider({ seed });

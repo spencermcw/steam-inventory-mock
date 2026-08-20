@@ -13,7 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const h = require('../harness');
-const fixtures = require('../fixtures/synthetic');
+const fixtures = require('../../examples/economy');
 
 const provider = (options = {}) => h.createProvider({ schema: fixtures, ...options });
 

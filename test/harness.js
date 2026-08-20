@@ -7,7 +7,7 @@
  * against this, never against MockProvider directly, so the same behavioural
  * suite can later be pointed at the native SteamProvider:
  *
- *   LSC_PROVIDER=steam node --test mock/test/conformance
+ *   STEAM_MOCK_PROVIDER=steam node --test test/conformance/*.test.js
  *
  * Divergence between mock and reality then shows up as a failing test in CI,
  * continuously — rather than as a surprise during final integration.
@@ -47,13 +47,54 @@ const TARGETS = {
 
   // A SteamProvider target registers here once the native binding exists. It
   // will advertise none of the capabilities above, and the suite will report
-  // exactly which semantics went unverified as a result.
+  // exactly which semantics went unverified as a result. A skip is honest —
+  // it says "this semantic is unverified here" — where a green test against
+  // a stubbed-out capability would be a lie. A worked example, for whoever
+  // wires up the native binding:
+  //
+  //   const { SteamProvider } = require('../lib/steam-provider');
+  //
+  //   steam: {
+  //     name: 'steam',
+  //     capabilities: {
+  //       // You cannot time-travel live Steam.
+  //       virtualClock: false,
+  //       // A real provider loads the app's uploaded itemdefs, not a fixture.
+  //       customSchema: false,
+  //       // GenerateItems is sandbox-only (apps in development), not something
+  //       // a live provider can invoke.
+  //       sandboxGrants: false,
+  //       // Item drops and other rolls happen server-side; there is no seed
+  //       // to fix them against.
+  //       deterministicRng: false,
+  //       // A real provider is not given a human-readable failure reason.
+  //       failureReasons: false,
+  //       // drop_interval / drop_limit / promo recurrence are enforced
+  //       // server-side; there is no client override to exercise.
+  //       gatingBypass: false,
+  //       // An account's owned apps / achievements / playtime are facts, not
+  //       // something a test can arrange.
+  //       entitlements: false,
+  //       // Steam's surplus behaviour is fixed and unmeasured.
+  //       configurableSurplus: false,
+  //       // Steam holds the inventory server-side and neither hands it over
+  //       // nor takes it back.
+  //       persistence: false,
+  //     },
+  //     create(options = {}) {
+  //       return new SteamProvider(options);
+  //     },
+  //   },
+  //
+  // Run the suite against it with:
+  //
+  //   STEAM_MOCK_PROVIDER=steam node --test test/conformance/*.test.js
 };
 
-const targetName = process.env.LSC_PROVIDER || 'mock';
+const targetName = process.env.STEAM_MOCK_PROVIDER || 'mock';
 const target = TARGETS[targetName];
 if (!target) {
-  throw new Error(`Unknown LSC_PROVIDER "${targetName}" (known: ${Object.keys(TARGETS).join(', ')})`);
+  throw new Error(`Unknown STEAM_MOCK_PROVIDER "${targetName}" (known: ${Object.keys(TARGETS).join(', ')})`);
 }
 
 const capabilities = target.capabilities;
@@ -99,29 +140,38 @@ function setEntitlements(provider, { ownsApps = [], achievements = [], playtime 
 
 // ─── Item definition lookup ───────────────────────────────────────────────────
 
-const clsCaches = new WeakMap();
+const propertyCaches = new WeakMap();
 
 /**
- * Resolve a `cls` authoring name to its itemdefid, by reading the custom `cls`
- * property off the definitions. Both calls used here exist on real Steam
- * (GetItemDefinitionIDs / GetItemDefinitionProperty) and `cls` is uploaded as
- * an extended property, so content tests written this way stay portable.
+ * Resolve an item definition by the value of an arbitrary extended property,
+ * reading it off every definition via GetItemDefinitionIDs /
+ * GetItemDefinitionProperty. Both of those are real Steam calls, which is
+ * precisely what makes this portable to a real provider target.
+ *
+ * `cls` — a host authoring convention uploaded as an extended property — was
+ * the original, hardcoded use of this, but `cls` is not a Steam concept: any
+ * custom property your content pipeline emits works here just as well.
  */
-function resolveCls(provider, cls) {
+function resolveByProperty(provider, property, value) {
   if (typeof provider.getItemDefinitionIDs !== 'function') {
     throw new Error(`Provider "${target.name}" cannot enumerate item definitions`);
   }
-  let cache = clsCaches.get(provider);
+  let providerCaches = propertyCaches.get(provider);
+  if (!providerCaches) {
+    providerCaches = new Map();
+    propertyCaches.set(provider, providerCaches);
+  }
+  let cache = providerCaches.get(property);
   if (!cache) {
     cache = new Map();
     for (const id of provider.getItemDefinitionIDs()) {
-      const name = provider.getItemDefinitionProperty(id, 'cls');
-      if (name && !cache.has(name)) cache.set(name, id);
+      const propValue = provider.getItemDefinitionProperty(id, property);
+      if (propValue && !cache.has(propValue)) cache.set(propValue, id);
     }
-    clsCaches.set(provider, cache);
+    providerCaches.set(property, cache);
   }
-  const id = cache.get(cls);
-  if (id == null) throw new Error(`No itemdef with cls "${cls}" in the loaded schema`);
+  const id = cache.get(value);
+  if (id == null) throw new Error(`No itemdef with ${property} "${value}" in the loaded schema`);
   return id;
 }
 
@@ -178,7 +228,7 @@ module.exports = {
   totals,
   countOf,
   materials,
-  resolveCls,
+  resolveByProperty,
   call,
   RESULT,
 };

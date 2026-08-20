@@ -25,7 +25,7 @@ const { execFileSync } = require('node:child_process');
 const { Account, peekNextInstanceId, reserveInstanceIds } = require('../../lib/inventory');
 const { saveState, loadState, migrate, writeSave, readSave, SAVE_VERSION, SAVE_KIND } = require('../../lib/persistence');
 const { Engine } = require('../../lib/engine');
-const fixtures = require('../fixtures/synthetic');
+const fixtures = require('../../examples/economy');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -186,7 +186,7 @@ test('watermark: a genuinely fresh process does not reissue restored ids', () =>
   // The counter is module-level, so no in-process test can see it start over —
   // and starting over is precisely the failure mode. This one loads the save in
   // a child node process, which is what an app restart actually is.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lsc-mock-save-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-inventory-mock-save-'));
   const file = path.join(dir, 'player.json');
   try {
     const engine = engineWithFixtures();
@@ -202,7 +202,7 @@ test('watermark: a genuinely fresh process does not reissue restored ids', () =>
 
     const child = `
       const { MockProvider, readSave, call } = require(${JSON.stringify(path.resolve(__dirname, '../../index.js'))});
-      const fixtures = require(${JSON.stringify(path.resolve(__dirname, '../fixtures/synthetic.js'))});
+      const fixtures = require(${JSON.stringify(path.resolve(__dirname, '../../examples/economy.js'))});
       const provider = new MockProvider({ schema: fixtures });
       provider.load(readSave(${JSON.stringify(file)}));
       call(provider, 'generateItems', [9004], [1]).then(r => {
@@ -257,7 +257,7 @@ test('version: a missing, non-integer or foreign envelope is refused', () => {
 
   assert.throws(() => loadState(engine, { ...state, version: undefined }), /no usable version/);
   assert.throws(() => loadState(engine, { ...state, version: '1' }), /no usable version/);
-  assert.throws(() => loadState(engine, { ...state, kind: 'something.else' }), /Not a lsc\.mock\.save file/);
+  assert.throws(() => loadState(engine, { ...state, kind: 'something.else' }), /Not a steam-inventory-mock\.save file/);
   assert.throws(() => loadState(engine, null), /must be an object/);
   assert.throws(() => loadState(engine, { kind: SAVE_KIND, version: 1 }), /no account payload/);
 });
@@ -329,7 +329,7 @@ test('load: a save can be restored under a different account id', () => {
 // ─── Files ────────────────────────────────────────────────────────────────────
 
 test('save: writeSave/readSave round-trip and leave no temp file behind', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lsc-mock-save-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-inventory-mock-save-'));
   const file = path.join(dir, 'nested', 'player.json');
   try {
     const engine = engineWithFixtures();
@@ -350,10 +350,10 @@ test('save: writeSave/readSave round-trip and leave no temp file behind', () => 
 });
 
 test('save: a truncated save file is a named error, not a crash mid-load', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lsc-mock-save-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-inventory-mock-save-'));
   const file = path.join(dir, 'broken.json');
   try {
-    fs.writeFileSync(file, '{"kind":"lsc.mock.save","vers');
+    fs.writeFileSync(file, '{"kind":"steam-inventory-mock.save","vers');
     assert.throws(() => readSave(file), /not valid JSON/);
     assert.throws(() => readSave(path.join(dir, 'missing.json')), /Cannot read save file/);
   } finally {
