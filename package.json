@@ -1,0 +1,36 @@
+{
+  "name": "steam-inventory-mock",
+  "version": "0.1.0",
+  "description": "An in-process mock of Steam's Inventory Service (ISteamInventory): exchange formulas, bundle and generator expansion, per-item tags, tag tools, dynamic properties, playtime drops and promo grants — driven by a virtual clock and a seedable RNG.",
+  "main": "index.js",
+  "types": "client.d.ts",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/unit/*.test.js test/conformance/*.test.js",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:conformance": "node --test test/conformance/*.test.js",
+    "demo": "node demo/playthrough.js",
+    "demo:save-load": "node demo/save-load.js",
+    "demo:distribution": "node demo/distribution.js"
+  },
+  "files": [
+    "index.js",
+    "client.d.ts",
+    "lib",
+    "examples",
+    "README.md"
+  ],
+  "keywords": [
+    "steam",
+    "steamworks",
+    "inventory",
+    "isteaminventory",
+    "mock",
+    "itemdef",
+    "economy"
+  ],
+  "license": "UNLICENSED"
+}
