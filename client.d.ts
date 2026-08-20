@@ -130,6 +130,13 @@ export type ExchangeMaterial = (bigint | number) | { itemId: bigint | number; qu
  * Not exported from the module — see the file header. Used only to type
  * `SteamClient.inventory` via `typeof`.
  */
+/**
+ * NOT a module export. This describes the shape of `client.inventory`, reached through
+ * `init()`. Unlike steamworks.js — where these namespaces really are module
+ * exports because there is one global client — `init()` here can be called more
+ * than once, so the namespaces hang off the returned client rather than off the
+ * module. Importing this name directly resolves to `undefined` at runtime.
+ */
 declare namespace inventory {
   /**
    * SteamItemDetails_t plus the two string-valued extras GetResultItemProperty
@@ -140,10 +147,14 @@ declare namespace inventory {
     itemDefId: number
     quantity: number
     /**
-     * SteamItemDetails_t::m_unFlags. Only NoTrade is ever set here, read back
-     * from the itemdef's `tradable` field. ItemRemoved and ItemConsumed are
-     * never populated — a row at quantity 0 carries no provenance for *why*,
-     * so guessing either flag would be a guess dressed as a fact.
+     * SteamItemDetails_t::m_unFlags, from two places. ItemRemoved and
+     * ItemConsumed arrive already set on the row — the engine records *why* a
+     * row is in this result set (consumed, spent as exchange material,
+     * destroyed by a tag tool, emptied by a split) at the moment it happens,
+     * since a row at quantity 0 alone cannot say which. NoTrade is computed
+     * here instead, from the itemdef's `tradable` field — it is a fact about
+     * the *definition*, not the operation. Never set for a trade or an
+     * expiry: neither is modelled anywhere in this library.
      */
     flags: number
     tags: string[]
@@ -240,6 +251,13 @@ export interface CallbackReturns {
  * Not exported from the module — see the file header. Used only to type
  * `SteamClient.callback` via `typeof`.
  */
+/**
+ * NOT a module export. This describes the shape of `client.callback`, reached through
+ * `init()`. Unlike steamworks.js — where these namespaces really are module
+ * exports because there is one global client — `init()` here can be called more
+ * than once, so the namespaces hang off the returned client rather than off the
+ * module. Importing this name directly resolves to `undefined` at runtime.
+ */
 declare namespace callback {
   export function register<C extends keyof CallbackReturns>(
     steamCallback: C,
@@ -274,6 +292,13 @@ export interface UpdateDescription {
  * server-side gating checks. Swap in a real binding and every one of these
  * fails loudly (`client.mock` does not exist) rather than silently doing
  * nothing — the whole reason this is a separate namespace from `inventory`.
+ */
+/**
+ * NOT a module export. This describes the shape of `client.mock`, reached through
+ * `init()`. Unlike steamworks.js — where these namespaces really are module
+ * exports because there is one global client — `init()` here can be called more
+ * than once, so the namespaces hang off the returned client rather than off the
+ * module. Importing this name directly resolves to `undefined` at runtime.
  */
 declare namespace mock {
   export function advanceTime(minutes: number, options?: AdvanceTimeOptions): SteamClient
@@ -345,8 +370,10 @@ export const enum SteamCallback {
 }
 
 /**
- * SteamItemDetails_t::m_unFlags. Only NoTrade is ever populated here — see
- * `inventory.InventoryItem.flags`.
+ * SteamItemDetails_t::m_unFlags. All three are populated — see
+ * `inventory.InventoryItem.flags` for which of NoTrade / ItemRemoved /
+ * ItemConsumed comes from where, and the one case (trading, item expiry —
+ * neither modelled here) that never sets ItemRemoved.
  */
 export const enum SteamItemFlags {
   NoTrade = 1,
@@ -376,14 +403,21 @@ export type RawExchangeMaterial = number | { itemId: number; quantity: number }
 
 /**
  * The row shape carried on a result set (SteamItemDetails_t plus the two
- * string-valued extras GetResultItemProperty serves). This is the pre-bigint,
- * pre-flags shape the handle-based provider hands back; the steamworks.js
- * façade (see `inventory.InventoryItem`) decodes it further.
+ * string-valued extras GetResultItemProperty serves). This is the pre-bigint
+ * shape the handle-based provider hands back; the steamworks.js façade (see
+ * `inventory.InventoryItem`) decodes it further and ORs in NoTrade.
  */
 export interface ResultItemRow {
   itemId: number
   itemdefid: number
   quantity: number
+  /**
+   * ESteamItemFlags bits the engine can know at the point it emptied, spent,
+   * or destroyed this instance (ItemRemoved / ItemConsumed) — 0 for a plain
+   * read (GetAllItems, GetItemsByID). NoTrade is never set here: it is a
+   * property of the item definition, added by the steamworks.js façade.
+   */
+  flags: number
   /** ";"-delimited "key:value" pairs, exactly as Steam serialises per-item tags. */
   tags: string
   /** JSON object of dynamic property name → raw value. */
@@ -562,6 +596,17 @@ export const enum RESULT {
   INVALID_PARAM = 8,
   INVALID_STATE = 11,
   LIMIT_EXCEEDED = 25,
+}
+
+/**
+ * SteamItemDetails_t::m_unFlags bits the engine itself can know and sets on
+ * `ResultItemRow.flags` — the engine-level mirror of `SteamItemFlags`, minus
+ * NoTrade (a fact about the item definition, added only by the steamworks.js
+ * façade — see `inventory.InventoryItem.flags`).
+ */
+export const enum ITEM_FLAGS {
+  REMOVED = 256,
+  CONSUMED = 512,
 }
 
 export declare const DEFAULT_OPTIONS: {
@@ -838,8 +883,13 @@ export declare class ItemInstance {
 
   /** Stable identity for stack merging: same itemdef AND same per-item tags. */
   stackKey(): string
-  /** The shape returned through result sets — mirrors SteamItemDetails_t. */
-  toResult(): ResultItemRow
+  /**
+   * The shape returned through result sets — mirrors SteamItemDetails_t.
+   * `flags` is supplied by the caller (the engine, at the point it empties,
+   * spends or destroys this instance) rather than read off the instance
+   * itself — see `ResultItemRow.flags`.
+   */
+  toResult(flags?: number): ResultItemRow
   toJSON(): ItemInstanceJSON
   static fromJSON(raw: ItemInstanceJSON): ItemInstance
 }
