@@ -24,8 +24,10 @@ repository is evidence about Steam's behaviour — only about this library's.
 
 ### Six behaviours are encoded guesses, and you inherit them
 
-Every one of these is marked `UNVERIFIED` in `lib/engine.js`. Four are named options with a
-default; two are hardcoded and cannot be swapped at all.
+Each is decided in `lib/engine.js` and documented at the point it is decided, most of them flagged
+`UNVERIFIED` in the comment there. Four are named options with a default; the last two are
+hardcoded and cannot be swapped at all. `docs/coverage.md` records the rest, including one further
+guess about accessories described [below](#tag-tools-and-accessories).
 
 | Option | Default | Why that default, and what it costs |
 |---|---|---|
@@ -115,7 +117,7 @@ const items = await client.inventory.getAllItems();
 await client.inventory.exchangeItems(9011, [{ itemId: items[0].itemId, quantity: 3 }]);
 
 // The virtual clock. 9050 has drop_interval: 30.
-await client.inventory.triggerItemDrop(9050);         // → [] , not eligible yet
+await client.inventory.triggerItemDrop(9050);         // → [] — not eligible yet
 client.mock.advanceTime(30);
 await client.inventory.triggerItemDrop(9050);         // → [{ itemDefId: 9001, quantity: 3, ... }]
 
@@ -134,6 +136,7 @@ must be destroyed.
 
 ```js
 const { MockProvider, RESULT } = require('steam-inventory-mock');
+const economy = require('steam-inventory-mock/examples/economy');
 
 const provider = new MockProvider({ schema: economy, seed: 'readme' });
 
@@ -404,7 +407,7 @@ Two rows share an itemdefid, so `result.find(i => i.itemDefId === 9101)` is a co
 live item and a dead id. `ItemRemoved` (`1 << 8`, the `256` above) is the only thing that tells them
 apart. `NoTrade` (`1 << 0`) is the odd one out — a fact about the *definition*, read back through
 `GetItemDefinitionProperty("tradable")` rather than recorded per operation, which is why the façade
-adds it and the raw provider rows above do not carry it.
+adds it and the handle-based rows above, which come straight off the engine, do not.
 
 **One real semantic gap.** Valve's `k_ESteamItemRemoved` also covers an item **traded away** or
 **expired**. This library models neither trading nor item expiry, so no row will ever carry the bit
@@ -421,16 +424,23 @@ full staging cycle: `startUpdateProperties()` returns a handle, `setProperty` /
 
 ```js
 const h = client.inventory.startUpdateProperties();
-client.inventory.setPropertyInt(h, itemId, 'enchant_level', 3);
+client.inventory.setPropertyInt(h, itemId, 'enchant_level', 3);   // → true, or false and no reason
+
+// Mock-only: what the batch has staged, and why the last set was refused.
+// Steam's SetProperty returns a bare bool and no explanation.
+client.mock.describeUpdate(h);           // → { handle: 1, itemCount: 1, editCount: 1, lastError: null }
+
 const rows = await client.inventory.submitUpdateProperties(h);
 rows[0].dynamicProps;                    // → { enchant_level: 3 }
-client.mock.describeUpdate(h);           // mock-only: what a batch has staged, and why a set failed
 ```
 
 `int` and `float` are genuinely different types — Valve exposes separate overloads and the
 white-list carries a type per property, so a white-list declaring `float` refuses an int. JS has one
-number type, so inference alone cannot express the distinction and the explicit constructors exist
-for callers that care. The 1024-byte cap is measured on the emitted JSON in **bytes**, not
+number type, so inference alone cannot express the distinction: `setProperty` infers, while
+`setPropertyInt` / `setPropertyFloat` state it, and `properties.intProperty(1)` /
+`properties.floatProperty(1)` construct a value that carries its type. The namespace is exported
+unflattened deliberately — a bare `intProperty` in a client's import list does not read as the
+deliberate type choice it is. The 1024-byte cap is measured on the emitted JSON in **bytes**, not
 characters, so a non-Latin value costs what it really costs; exceeding it, or exceeding 100 items
 in one call, fails with `LIMIT_EXCEEDED`.
 
@@ -508,7 +518,7 @@ once the process that issued it is gone. Real Steam's handles do not survive a r
 
 ## Test-mode gating bypass
 
-Two engine options, both `false` in production and neither safe to ship enabled:
+Two engine options, both defaulting to `false`, and neither safe to ship enabled:
 
 ```js
 const previous = client.mock.bypassDropGating(true);   // returns the setting it replaced
@@ -534,7 +544,7 @@ there.
 ```
 npm test                  # 308 tests, 308 pass, 0 fail, 0 skipped — ~0.5s
 npm run test:unit         # 125
-npm run test:conformance   # 183 against the `mock` target
+npm run test:conformance  # 183 against the `mock` target
 ```
 
 Node's built-in test runner, no framework, no dependencies. The conformance suite reports **0

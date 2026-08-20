@@ -5,12 +5,14 @@
  *
  * Public surface of the mock Steam Inventory Service.
  *
- *   const { MockProvider } = require('./mock');           // async, Steam-shaped
- *   const { Engine }       = require('./mock');           // sync core, for the simulator
- *   const { init }         = require('./mock');           // steamworks.js-shaped façade
+ *   const { init }         = require('steam-inventory-mock');  // steamworks.js-shaped façade
+ *   const { MockProvider } = require('steam-inventory-mock');  // the handle-based ISteamInventory
+ *   const { Engine }       = require('steam-inventory-mock');  // the synchronous core
  *
- * All three sit on the same engine by construction, so the economy the balance
- * simulator validates is the economy the client plays.
+ * All three sit on the same engine by construction. That matters if you drive
+ * the Engine directly — a simulation over millions of operations, say — because
+ * the economy it resolves is then the same one the client plays, rather than a
+ * second implementation free to drift from it.
  */
 
 const { MockProvider } = require('./lib/provider');

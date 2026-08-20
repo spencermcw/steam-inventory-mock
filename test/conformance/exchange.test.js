@@ -159,7 +159,7 @@ test('exchange: overlapping tag operands are assigned, not greedily grabbed', { 
 
 test('exchange: surplus material handling follows the configured policy', { skip: h.needs('customSchema', 'sandboxGrants', 'configurableSurplus') }, async () => {
   // UNVERIFIED against real Steam — this test documents the three readings and
-  // pins the mock to whichever one is configured. See mock/README.md.
+  // pins the mock to whichever one is configured. See README.md.
   const spec = { 9001: 5 }; // recipe needs 2
 
   const consuming = provider({ surplusPolicy: 'consume' });
