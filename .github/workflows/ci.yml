@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The package declares engines.node >= 22. The matrix exists to find out
+        # whether that floor is real: the shipped code uses only node:events, so
+        # a lower floor may well be honest. Until a lower version passes here,
+        # the declared floor stays where it is rather than being guessed down.
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No install step, deliberately: this package has no dependencies, and a
+      # bare `npm ci` with no lockfile would fail. If a dependency ever appears,
+      # that omission should be noticed here.
+      - run: npm test
+      - run: npm run demo
+      - run: npm run demo:save-load
+      - run: npm run demo:distribution
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # client.d.ts is hand-written, so nothing but this check keeps it honest
+      # against the JavaScript it describes.
+      - run: npx -y typescript@latest --noEmit --strict client.d.ts
+
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The README cites docs/coverage.md as authoritative and links to
+      # test/harness.js; both must be inside the tarball or those links 404 on
+      # npm. This asserts the published contents rather than trusting `files`.
+      - name: Pack and check the published contents
+        run: |
+          npm pack
+          tar -tzf steam-inventory-mock-*.tgz | sed 's|^package/||' | sort > shipped.txt
+          for required in index.js client.d.ts README.md LICENSE docs/coverage.md test/harness.js examples/economy.js; do
+            grep -qx "$required" shipped.txt || { echo "MISSING FROM TARBALL: $required"; exit 1; }
+          done
+          echo "All required files present in the tarball."
+      - name: Install the tarball and use it as a consumer would
+        run: |
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/steam-inventory-mock-*.tgz
+          node -e "
+            const { init } = require('steam-inventory-mock');
+            const economy = require('steam-inventory-mock/examples/economy');
+            init({ schema: economy, seed: 'ci' }).inventory.getItemDefinitionIDs().length > 0
+              ? console.log('installed package works')
+              : (() => { throw new Error('no itemdefs'); })();
+          "
