@@ -6,7 +6,7 @@ playtime drops and promo grants — driven by a **virtual clock** and a seedable
 the reason to want it: a `playtimegenerator`'s `drop_interval`, a manual promo's monthly
 recurrence and a six-week progression curve all run on real wall-clock playtime, which makes them
 effectively untestable against live Steam. Here each one is a millisecond unit test. Zero runtime
-dependencies, CommonJS, Node ≥ 22, 308 tests on Node's built-in runner and no test framework.
+dependencies, CommonJS, Node ≥ 20, 308 tests on Node's built-in runner and no test framework.
 
 ## ⚠️ Before you adopt this
 

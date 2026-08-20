@@ -6,7 +6,7 @@
   "types": "client.d.ts",
   "type": "commonjs",
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "scripts": {
     "test": "node --test test/unit/*.test.js test/conformance/*.test.js",
@@ -16,7 +16,9 @@
     "test:conformance:example": "node test/conformance-report.js --target ./test/example-steam-target.js",
     "demo": "node demo/playthrough.js",
     "demo:save-load": "node demo/save-load.js",
-    "demo:distribution": "node demo/distribution.js"
+    "demo:distribution": "node demo/distribution.js",
+    "prepublishOnly": "node scripts/check-publish-tag.js",
+    "release:next": "npm publish --tag next"
   },
   "files": [
     "index.js",
@@ -38,7 +40,7 @@
     "economy"
   ],
   "license": "MIT",
-  "author": "spencermcw",
+  "author": "Spencer McWilliams",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/spencermcw/steam-inventory-mock.git"

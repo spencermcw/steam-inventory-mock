@@ -11,11 +11,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The package declares engines.node >= 22. The matrix exists to find out
-        # whether that floor is real: the shipped code uses only node:events, so
-        # a lower floor may well be honest. Until a lower version passes here,
-        # the declared floor stays where it is rather than being guessed down.
-        node: ['22', '24']
+        # engines.node is >= 20, and this matrix is what keeps that claim
+        # honest. The floor is not 18 for lack of evidence -- 18.20.4 passes the
+        # full suite -- but because node:test was experimental there and stable
+        # from 20, and a package whose headline feature is a conformance suite
+        # consumers run should not sit on an experimental test runner.
+        node: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
